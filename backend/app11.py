@@ -721,9 +721,13 @@ def tg_webhook():
     return "OK"
 
 # ── START ─────────────────────────────────────────────────────────────
+# Start background loops at import time so they run under gunicorn too
+# (gunicorn never executes the __main__ block). One worker = one set of
+# loops; Render's default `gunicorn app11:app` uses a single worker.
+threading.Thread(target=canvas_loop, daemon=True).start()
+threading.Thread(target=outlook_loop, daemon=True).start()
+
 if __name__ == "__main__":
-    threading.Thread(target=canvas_loop, daemon=True).start()
-    threading.Thread(target=outlook_loop, daemon=True).start()
     port = int(os.getenv("PORT", 5000))
     print(f"Jarvis backend online on port {port}")
     app.run(host="0.0.0.0", port=port, debug=False)
