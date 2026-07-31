@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{width:300px;font-family:'Segoe UI',sans-serif;background:#0E1318;color:#E8EDF2}
+  .head{background:linear-gradient(135deg,#3B82F6,#6366F1);padding:16px;display:flex;align-items:center;gap:10px}
+  .logo{width:34px;height:34px;background:rgba(255,255,255,.2);border-radius:9px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:16px;color:#fff}
+  .head h2{font-size:15px;font-weight:700;color:#fff}
+  .head p{font-size:11px;color:rgba(255,255,255,.7)}
+  .body{padding:16px}
+  .status-box{display:flex;align-items:center;gap:10px;padding:12px 14px;background:#141A21;border-radius:10px;border:1px solid rgba(255,255,255,.07);margin-bottom:16px}
+  .dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;transition:all .3s}
+  .dot.green{background:#10B981;box-shadow:0 0 8px #10B981}
+  .dot.grey{background:#4B5563}
+  .dot.yellow{background:#F59E0B;box-shadow:0 0 8px #F59E0B}
+  .status-text{font-size:12px;color:#9CA3AF}
+  .tab-row{font-size:11px;color:#4B5563;margin-bottom:16px;padding:0 2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  label{display:block;font-size:11px;color:#9CA3AF;margin-bottom:5px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+  input{width:100%;background:#0E1318;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:9px 12px;font-size:12px;color:#E8EDF2;outline:none;margin-bottom:12px;font-family:monospace;transition:border .2s}
+  input:focus{border-color:rgba(59,130,246,.5)}
+  .btn{width:100%;padding:11px;background:#3B82F6;border:none;border-radius:8px;color:#fff;font-size:13px;font-weight:700;cursor:pointer;font-family:'Segoe UI',sans-serif;transition:all .2s;margin-bottom:8px}
+  .btn:hover{background:#2563EB;transform:translateY(-1px)}
+  .btn:active{transform:translateY(0)}
+  .btn-test{background:#1F2937;border:1px solid rgba(255,255,255,.1);color:#9CA3AF}
+  .btn-test:hover{background:#374151;color:#E8EDF2}
+  .msg{font-size:11px;text-align:center;padding:6px;border-radius:6px;margin-top:4px;display:none}
+  .msg.ok{background:rgba(16,185,129,.1);color:#10B981;display:block}
+  .msg.err{background:rgba(239,68,68,.1);color:#FCA5A5;display:block}
+  .divider{height:1px;background:rgba(255,255,255,.06);margin:14px 0}
+  .tip{font-size:11px;color:#4B5563;line-height:1.6;text-align:center}
+</style>
+</head>
+<body>
+<div class="head">
+  <div class="logo">J</div>
+  <div><h2>Jarvis Agent</h2><p>Browser Control</p></div>
+</div>
+<div class="body">
+
+  <div class="status-box">
+    <div class="dot grey" id="dot"></div>
+    <span class="status-text" id="status-text">Click "Test Connection" to check</span>
+  </div>
+
+  <div class="tab-row" id="tab-row">No tab detected</div>
+
+  <label>Backend URL</label>
+  <input type="text" id="url" placeholder="https://jarvis-api.onrender.com">
+
+  <label>API Secret (leave blank if none)</label>
+  <input type="password" id="secret" placeholder="Leave blank if you deleted it">
+
+  <button class="btn" onclick="save()">Save Settings</button>
+  <button class="btn btn-test" onclick="testConn()">Test Connection</button>
+  <div class="msg" id="msg"></div>
+
+  <div class="divider"></div>
+  <div class="tip">After saving, the extension polls your backend every 2 seconds for commands from Jarvis chat.</div>
+
+</div>
+<script>
+
+// Load saved settings on open
+chrome.storage.local.get(['jarvis_url','jarvis_secret'], s => {
+  if(s.jarvis_url)    document.getElementById('url').value    = s.jarvis_url;
+  if(s.jarvis_secret) document.getElementById('secret').value = s.jarvis_secret;
+});
+
+// Show current tab
+chrome.tabs.query({active:true,currentWindow:true}, tabs => {
+  if(tabs[0]) {
+    const t = tabs[0];
+    document.getElementById('tab-row').textContent = '📄 ' + (t.title||t.url||'').slice(0,50);
+  }
+});
+
+function save() {
+  const url    = document.getElementById('url').value.trim().replace(/\/$/,'');
+  const secret = document.getElementById('secret').value.trim();
+  chrome.storage.local.set({jarvis_url: url, jarvis_secret: secret}, () => {
+    showMsg('Saved! Testing connection...', 'ok');
+    setTimeout(testConn, 500);
+  });
+}
+
+async function testConn() {
+  const url = document.getElementById('url').value.trim().replace(/\/$/,'');
+  if(!url) { showMsg('Enter your backend URL first', 'err'); return; }
+
+  setDot('yellow', 'Testing...');
+  showMsg('', '');
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const r = await fetch(url + '/', { signal: controller.signal });
+    clearTimeout(timer);
+    const d = await r.json();
+    if(d.status === 'online') {
+      setDot('green', 'Connected ✓ — Jarvis is live');
+      showMsg('Connection successful! Browser commands will work.', 'ok');
+    } else {
+      setDot('grey', 'Backend responded but looks wrong');
+      showMsg('Unexpected response: ' + JSON.stringify(d).slice(0,80), 'err');
+    }
+  } catch(e) {
+    const msg = e.name === 'AbortError' ? 'Timed out — Render might be sleeping' : e.message;
+    setDot('grey', 'Cannot reach backend');
+    showMsg('Failed: ' + msg + '. Wake up Render first by opening the URL in a tab.', 'err');
+  }
+}
+
+function setDot(color, text) {
+  const dot  = document.getElementById('dot');
+  const stat = document.getElementById('status-text');
+  dot.className = 'dot ' + color;
+  stat.textContent = text;
+}
+
+function showMsg(text, type) {
+  const el = document.getElementById('msg');
+  el.textContent = text;
+  el.className = 'msg' + (type ? ' '+type : '');
+}
+
+</script>
+</body>
+</html>

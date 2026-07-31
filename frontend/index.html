@@ -1,0 +1,1234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Jarvis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden}
+body{font-family:'Space Grotesk',sans-serif;background:#080C10;color:#E8EDF2}
+:root{
+  --bg:#080C10;--surface:#0E1318;--surface2:#141A21;--surface3:#1A2028;
+  --border:rgba(255,255,255,0.06);--border-md:rgba(255,255,255,0.1);
+  --accent:#3B82F6;--accent-dim:rgba(59,130,246,0.12);--accent-glow:rgba(59,130,246,0.3);
+  --green:#10B981;--gold:#F59E0B;--red:#EF4444;--purple:#8B5CF6;
+  --text:#E8EDF2;--text2:#8896A4;--text3:#4A5568;
+  --mono:'JetBrains Mono',monospace;--r:10px;--r-lg:16px;
+}
+body::before{
+  content:'';position:fixed;inset:0;z-index:0;
+  background:
+    radial-gradient(ellipse 70% 50% at 10% 5%,rgba(59,130,246,0.08) 0%,transparent 60%),
+    radial-gradient(ellipse 50% 60% at 90% 95%,rgba(139,92,246,0.06) 0%,transparent 60%);
+  pointer-events:none;
+}
+
+/* ── LOCK ─────────────────────────── */
+#lock{
+  position:fixed;inset:0;z-index:9999;
+  display:flex;align-items:center;justify-content:center;
+  background:#080C10;
+  transition:opacity .55s ease,transform .55s ease;
+}
+#lock.out{opacity:0;transform:scale(1.04);pointer-events:none}
+.lock-card{
+  display:flex;flex-direction:column;align-items:center;
+  animation:lockIn .5s ease;
+}
+@keyframes lockIn{from{opacity:0;transform:translateY(18px)}to{opacity:1;transform:translateY(0)}}
+.lock-mark{
+  width:68px;height:68px;border-radius:18px;
+  background:linear-gradient(135deg,#3B82F6,#6366F1);
+  display:flex;align-items:center;justify-content:center;
+  font-size:30px;font-weight:700;color:#fff;
+  margin-bottom:20px;
+  box-shadow:0 0 48px rgba(99,102,241,0.4);
+}
+.lock-title{font-size:22px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px}
+.lock-sub{font-size:12px;color:var(--text3);margin-bottom:28px;font-family:var(--mono)}
+.lock-input-row{
+  display:flex;gap:0;width:280px;
+  background:var(--surface2);
+  border:1px solid var(--border-md);
+  border-radius:var(--r-lg);overflow:hidden;
+  transition:border-color .2s,box-shadow .2s;
+}
+.lock-input-row:focus-within{
+  border-color:rgba(59,130,246,.45);
+  box-shadow:0 0 0 3px var(--accent-dim);
+}
+.lock-input-row.shake{animation:shake .4s ease}
+.lock-input-row.err{border-color:rgba(239,68,68,.5)}
+@keyframes shake{0%,100%{transform:translateX(0)}20%,60%{transform:translateX(-7px)}40%,80%{transform:translateX(7px)}}
+#pin-in{
+  flex:1;background:transparent;border:none;outline:none;
+  padding:13px 16px;font-size:14px;font-family:'Space Grotesk',sans-serif;
+  color:var(--text);letter-spacing:.05em;
+}
+#pin-in::placeholder{color:var(--text3);letter-spacing:0}
+.lock-go{
+  padding:0 18px;background:none;border:none;
+  color:var(--accent);cursor:pointer;font-size:18px;
+  transition:all .2s;border-left:1px solid var(--border);
+}
+.lock-go:hover{background:var(--accent-dim)}
+.lock-err{
+  font-size:12px;color:var(--red);margin-top:14px;
+  font-family:var(--mono);opacity:0;transition:opacity .2s;
+}
+.lock-err.show{opacity:1}
+.lock-hint{font-size:11px;color:var(--text3);margin-top:10px;font-family:var(--mono)}
+
+/* ── GREETING ─────────────────────── */
+#greeting{
+  position:fixed;inset:0;z-index:9000;
+  display:flex;align-items:center;justify-content:center;
+  background:#080C10;opacity:0;pointer-events:none;transition:opacity .4s ease;
+}
+#greeting.show{opacity:1;pointer-events:auto}
+#greeting.fade{opacity:0;pointer-events:none}
+.greet-inner{text-align:center}
+.greet-time{font-family:var(--mono);font-size:11px;color:var(--text3);margin-bottom:14px}
+.greet-h{font-size:clamp(30px,6vw,50px);font-weight:700;letter-spacing:-.03em;line-height:1.1}
+.greet-h span{color:var(--accent)}
+.greet-sub{font-size:14px;color:var(--text2);margin-top:10px}
+
+/* ── APP SHELL ────────────────────── */
+#app{
+  position:fixed;inset:0;z-index:100;display:flex;
+  opacity:0;pointer-events:none;transition:opacity .5s ease;
+}
+#app.ready{opacity:1;pointer-events:auto}
+
+/* ── SIDEBAR ──────────────────────── */
+.sidebar{
+  width:216px;flex-shrink:0;background:var(--surface);
+  border-right:1px solid var(--border);display:flex;flex-direction:column;
+  z-index:200;transition:transform .3s ease;
+}
+.sb-head{padding:20px 16px 14px;border-bottom:1px solid var(--border)}
+.sb-logo{display:flex;align-items:center;gap:10px;margin-bottom:3px}
+.sb-mark{
+  width:28px;height:28px;border-radius:7px;
+  background:linear-gradient(135deg,#3B82F6,#6366F1);
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;font-weight:700;color:#fff;flex-shrink:0;
+}
+.sb-name{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.sb-tag{font-size:10px;color:var(--text3);font-family:var(--mono);margin-left:38px}
+.sb-nav{flex:1;padding:10px 8px;overflow-y:auto}
+.sb-sec{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--text3);padding:10px 8px 5px}
+.ni{
+  display:flex;align-items:center;gap:9px;padding:8px 10px;
+  border-radius:var(--r);cursor:pointer;transition:all .15s;
+  color:var(--text2);font-size:13px;font-weight:500;
+  margin-bottom:1px;user-select:none;
+}
+.ni svg{width:14px;height:14px;flex-shrink:0;opacity:.65}
+.ni:hover{background:var(--surface2);color:var(--text)}
+.ni:hover svg{opacity:1}
+.ni.active{background:var(--accent-dim);color:var(--accent);border:1px solid rgba(59,130,246,.2)}
+.ni.active svg{opacity:1}
+.ni-badge{
+  margin-left:auto;font-size:10px;font-weight:600;font-family:var(--mono);
+  background:rgba(239,68,68,.15);color:var(--red);border-radius:10px;
+  padding:1px 6px;min-width:18px;text-align:center;
+}
+.sb-foot{padding:12px 16px;border-top:1px solid var(--border)}
+.status-line{display:flex;align-items:center;gap:7px;font-size:10px;color:var(--text3)}
+.sdot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2.5s ease infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* ── MAIN ─────────────────────────── */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
+.topbar{
+  height:50px;flex-shrink:0;border-bottom:1px solid var(--border);
+  display:flex;align-items:center;padding:0 22px;gap:10px;
+  background:rgba(14,19,24,.9);backdrop-filter:blur(12px);
+}
+.tb-title{font-size:14px;font-weight:600;flex:1}
+.tb-badge{
+  font-family:var(--mono);font-size:10px;color:var(--purple);
+  background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.2);
+  padding:3px 8px;border-radius:20px;
+}
+.mob-btn{display:none;background:none;border:none;color:var(--text2);cursor:pointer;padding:4px}
+
+/* ── PAGES ────────────────────────── */
+.page{display:none;flex:1;flex-direction:column;overflow:hidden}
+.page.active{display:flex}
+.p-scroll{flex:1;overflow-y:auto;padding:28px 22px}
+.p-wrap{max-width:660px;margin:0 auto}
+.p-h{font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:4px}
+.p-sub{font-size:13px;color:var(--text2);margin-bottom:24px}
+
+/* ── CHAT ─────────────────────────── */
+.chat-land{
+  flex:1;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;
+  padding:40px 24px;text-align:center;
+  animation:fadeUp .4s ease;
+}
+@keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+.land-time{font-family:var(--mono);font-size:11px;color:var(--text3);letter-spacing:.06em;margin-bottom:16px}
+.land-h{font-size:clamp(26px,4vw,38px);font-weight:700;letter-spacing:-.03em;line-height:1.1;margin-bottom:8px}
+.land-h em{color:var(--accent);font-style:normal}
+.land-p{font-size:13px;color:var(--text2);margin-bottom:28px;line-height:1.6}
+.chips{display:flex;gap:7px;flex-wrap:wrap;justify-content:center;margin-bottom:24px;max-width:580px}
+.chip{
+  font-size:12px;font-weight:500;padding:6px 13px;border-radius:20px;
+  border:1px solid var(--border-md);background:var(--surface2);
+  color:var(--text2);cursor:pointer;transition:all .18s;
+}
+.chip:hover{background:var(--surface3);border-color:var(--accent);color:var(--accent)}
+.chat-thread{flex:1;overflow-y:auto;padding:24px 22px;display:none}
+.chat-thread.on{display:block}
+.msgs{max-width:760px;margin:0 auto}
+.msg-row{display:flex;gap:11px;align-items:flex-start;margin-bottom:20px;animation:fadeUp .25s ease}
+.msg-row.user{flex-direction:row-reverse}
+.av{width:26px;height:26px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700}
+.av-j{background:linear-gradient(135deg,#3B82F6,#6366F1);color:#fff}
+.av-m{background:var(--surface3);border:1px solid var(--border-md);color:var(--text2)}
+.bubble{max-width:82%;padding:11px 15px;border-radius:13px;font-size:14px;line-height:1.65}
+.bubble-j{background:var(--surface2);border:1px solid var(--border);color:var(--text);border-top-left-radius:3px}
+.bubble-u{background:linear-gradient(135deg,#3B82F6,#4F46E5);color:#fff;border-top-right-radius:3px}
+.bubble-j pre{background:rgba(0,0,0,.4);border:1px solid var(--border);border-radius:7px;padding:10px;overflow-x:auto;margin:8px 0;font-family:var(--mono);font-size:12px}
+.bubble-j code:not(pre code){font-family:var(--mono);font-size:12px;background:rgba(0,0,0,.3);padding:1px 5px;border-radius:3px;color:#93C5FD}
+.bubble-j p{margin-bottom:7px}.bubble-j p:last-child{margin-bottom:0}
+.bubble-j ul,.bubble-j ol{margin:7px 0 7px 16px}.bubble-j li{margin-bottom:3px}
+.bubble-j strong{color:#fff;font-weight:600}
+.msg-time{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:3px;padding:0 3px}
+.msg-row.user .msg-time{text-align:right}
+.typing{display:flex;gap:4px;align-items:center;padding:12px 15px}
+.typing span{width:5px;height:5px;border-radius:50%;background:var(--text3);animation:td 1.4s infinite}
+.typing span:nth-child(2){animation-delay:.2s}
+.typing span:nth-child(3){animation-delay:.4s}
+@keyframes td{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-5px)}}
+
+/* ── INPUT BAR ───────────────────── */
+.inp-wrap{border-top:1px solid var(--border);padding:14px 22px 18px;background:rgba(14,19,24,.97)}
+.inp-bar{
+  max-width:760px;margin:0 auto;
+  background:var(--surface2);border:1px solid var(--border-md);
+  border-radius:var(--r-lg);padding:12px 14px;
+  transition:border-color .2s,box-shadow .2s;
+}
+.inp-bar:focus-within{border-color:rgba(59,130,246,.4);box-shadow:0 0 0 3px var(--accent-dim)}
+.inp-bar textarea{
+  width:100%;background:transparent;border:none;outline:none;resize:none;
+  color:var(--text);font-size:14px;font-family:'Space Grotesk',sans-serif;
+  min-height:22px;max-height:130px;line-height:1.6;
+}
+.inp-bar textarea::placeholder{color:var(--text3)}
+.inp-foot{display:flex;align-items:center;justify-content:space-between;margin-top:9px}
+.inp-hint{font-size:11px;color:var(--text3);font-family:var(--mono)}
+.inp-right{display:flex;align-items:center;gap:8px}
+.model-chip{font-size:10px;font-family:var(--mono);color:var(--purple);background:rgba(139,92,246,.12);border:1px solid rgba(139,92,246,.2);padding:3px 8px;border-radius:6px}
+.send-btn{width:28px;height:28px;border-radius:7px;background:var(--accent);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all .18s}
+.send-btn:hover{background:#2563EB;transform:scale(1.06)}
+.send-btn:active{transform:scale(.94)}
+.send-btn:disabled{background:var(--surface3);cursor:not-allowed;transform:none}
+.send-btn svg{width:12px;height:12px;color:#fff}
+
+/* ── CANVAS ──────────────────────── */
+.assign-card{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-lg);padding:18px 20px;margin-bottom:10px;animation:fadeUp .3s ease;transition:border-color .2s}
+.assign-card:hover{border-color:var(--border-md)}
+.ac-course{font-size:11px;font-weight:600;color:var(--accent);font-family:var(--mono);letter-spacing:.04em;margin-bottom:5px}
+.ac-title{font-size:15px;font-weight:600;color:var(--text);margin-bottom:6px}
+.ac-meta{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--text2);margin-bottom:12px}
+.ac-status{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:20px;font-family:var(--mono)}
+.s-pending{background:rgba(245,158,11,.1);color:var(--gold);border:1px solid rgba(245,158,11,.2)}
+.s-ready{background:rgba(59,130,246,.1);color:var(--accent);border:1px solid rgba(59,130,246,.2)}
+.s-done{background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.2)}
+.s-submitted{background:rgba(139,92,246,.1);color:var(--purple);border:1px solid rgba(139,92,246,.2)}
+.ac-timer{font-family:var(--mono);font-size:12px;color:var(--text3);margin-top:6px}
+.ac-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.ac-btn{font-size:12px;font-weight:600;padding:6px 14px;border-radius:var(--r);border:none;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s}
+.ac-btn-primary{background:var(--accent);color:#fff}
+.ac-btn-primary:hover{background:#2563EB}
+.ac-btn-ghost{background:var(--surface3);color:var(--text2);border:1px solid var(--border-md)}
+.ac-btn-ghost:hover{color:var(--text)}
+.progress-bar{width:100%;height:3px;background:var(--surface3);border-radius:2px;margin-top:8px;overflow:hidden}
+.progress-fill{height:100%;background:var(--accent);border-radius:2px;transition:width 1s linear}
+
+/* ── OUTLOOK ─────────────────────── */
+.outlook-grid{display:grid;grid-template-columns:260px 1fr;flex:1;overflow:hidden}
+.email-list{border-right:1px solid var(--border);overflow-y:auto;background:var(--surface)}
+.el-head{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.el-title{font-size:13px;font-weight:600}
+.el-ref{background:none;border:none;color:var(--text3);cursor:pointer;font-size:15px;transition:color .2s;padding:3px;border-radius:5px}
+.el-ref:hover{color:var(--accent)}
+.email-item{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+.email-item:hover{background:var(--surface2)}
+.email-item.active{background:var(--accent-dim);border-left:2px solid var(--accent)}
+.email-item.unread .ei-from{font-weight:700}
+.ei-from{font-size:13px;color:var(--text);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ei-subj{font-size:12px;color:var(--text2);margin-bottom:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ei-date{font-size:10px;color:var(--text3);font-family:var(--mono)}
+.email-view{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.ev-head{padding:20px 24px 14px;border-bottom:1px solid var(--border)}
+.ev-subject{font-size:18px;font-weight:700;letter-spacing:-.01em;margin-bottom:4px}
+.ev-meta{font-size:12px;color:var(--text2)}
+.ev-body{flex:1;overflow-y:auto;padding:20px 24px;font-size:14px;line-height:1.75;color:var(--text2)}
+.ev-actions{padding:14px 24px;border-top:1px solid var(--border);display:flex;gap:10px;flex-wrap:wrap}
+.ev-btn{font-size:13px;font-weight:600;padding:8px 18px;border-radius:var(--r);border:none;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s}
+.ev-btn-blue{background:var(--accent);color:#fff}.ev-btn-blue:hover{background:#2563EB}
+.ev-btn-ghost{background:var(--surface2);color:var(--text2);border:1px solid var(--border-md)}.ev-btn-ghost:hover{color:var(--text)}
+.ai-card{margin:14px 24px 0;padding:14px 18px;background:var(--accent-dim);border:1px solid rgba(59,130,246,.2);border-radius:var(--r);font-size:13px;color:var(--text2);line-height:1.7}
+.ai-card-title{font-size:11px;font-weight:700;color:var(--accent);letter-spacing:.06em;text-transform:uppercase;margin-bottom:6px;font-family:var(--mono)}
+.draft-area{margin:14px 24px 0}
+.draft-area textarea{width:100%;background:var(--surface2);border:1px solid var(--border-md);border-radius:var(--r);padding:12px 14px;font-size:13px;font-family:'Space Grotesk',sans-serif;color:var(--text);outline:none;resize:vertical;min-height:120px;line-height:1.6}
+.draft-area textarea:focus{border-color:rgba(59,130,246,.4)}
+.ev-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:8px}
+.ev-empty svg{width:36px;height:36px;opacity:.25}
+.ev-empty p{font-size:13px}
+
+/* ── BRAIN.FM ────────────────────── */
+.brain-wrap{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 24px;text-align:center}
+.brain-modes{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:28px}
+.bm-chip{padding:9px 18px;border-radius:20px;border:1px solid var(--border-md);background:var(--surface2);color:var(--text2);cursor:pointer;font-size:13px;font-weight:500;font-family:'Space Grotesk',sans-serif;transition:all .2s}
+.bm-chip.active{background:rgba(139,92,246,.15);border-color:var(--purple);color:var(--purple)}
+.brain-viz-wrap{width:100%;max-width:500px;height:130px;background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:var(--r-lg);overflow:hidden;margin-bottom:24px}
+#brain-canvas{width:100%;height:100%}
+.brain-play{width:72px;height:72px;border-radius:50%;background:linear-gradient(135deg,#8B5CF6,#6366F1);border:none;color:#fff;font-size:24px;cursor:pointer;box-shadow:0 0 40px rgba(139,92,246,.35);transition:all .3s;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+.brain-play:hover{transform:scale(1.06);box-shadow:0 0 60px rgba(139,92,246,.5)}
+.brain-play:active{transform:scale(.96)}
+.brain-status{font-size:13px;color:var(--text3);font-family:var(--mono)}
+.brain-timer{font-size:20px;font-weight:600;font-family:var(--mono);color:var(--text);margin-top:6px;min-height:28px}
+.brain-info{margin-top:18px;padding:10px 18px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);font-size:12px;color:var(--text2);max-width:340px;line-height:1.6}
+
+/* ── MATH ────────────────────────── */
+.math-wrap{max-width:700px;margin:0 auto}
+.math-box{background:var(--surface2);border:1px solid var(--border-md);border-radius:var(--r-lg);padding:16px;margin-bottom:14px}
+.math-box textarea{width:100%;background:transparent;border:none;outline:none;resize:none;color:var(--text);font-size:15px;font-family:'Space Grotesk',sans-serif;min-height:80px;line-height:1.6}
+.math-box textarea::placeholder{color:var(--text3)}
+.math-foot{display:flex;justify-content:space-between;align-items:center;margin-top:10px;flex-wrap:wrap;gap:8px}
+.math-exs{display:flex;gap:6px;flex-wrap:wrap}
+.math-ex{font-size:11px;padding:4px 10px;border-radius:15px;border:1px solid var(--border);background:var(--surface3);color:var(--text3);cursor:pointer;font-family:var(--mono);transition:all .2s}
+.math-ex:hover{color:var(--purple);border-color:rgba(139,92,246,.3)}
+.math-btn{font-size:13px;font-weight:600;padding:9px 22px;background:var(--purple);border:none;border-radius:var(--r);color:#fff;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s;white-space:nowrap}
+.math-btn:hover{background:#7C3AED}
+.math-btn:disabled{background:var(--surface3);cursor:not-allowed;color:var(--text3)}
+.math-result{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-lg);padding:20px;display:none;animation:fadeUp .3s ease}
+.math-result.show{display:block}
+.mr-label{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--purple);font-family:var(--mono);margin-bottom:12px}
+.mr-body{font-size:14px;line-height:1.8;color:var(--text)}
+.mr-body pre{background:rgba(0,0,0,.3);border:1px solid var(--border);border-radius:7px;padding:10px;font-family:var(--mono);font-size:12px;overflow-x:auto;margin:10px 0}
+.mr-body strong{color:var(--purple);font-weight:600}
+.mr-actions{display:flex;gap:8px;margin-top:14px}
+.mr-btn{font-size:12px;font-weight:600;padding:6px 14px;border-radius:var(--r);border:1px solid var(--border-md);background:var(--surface3);color:var(--text2);cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s}
+.mr-btn:hover{color:var(--text);border-color:var(--border-md)}
+
+/* ── TODOS ───────────────────────── */
+.todo-add{display:flex;gap:8px;margin-bottom:18px}
+.todo-add input{flex:1;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);padding:10px 12px;font-size:13px;font-family:'Space Grotesk',sans-serif;color:var(--text);outline:none;transition:border-color .2s}
+.todo-add input:focus{border-color:rgba(59,130,246,.4)}
+.todo-add input::placeholder{color:var(--text3)}
+.add-btn{padding:10px 18px;background:var(--accent);border:none;border-radius:var(--r);color:#fff;font-size:13px;font-weight:600;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:background .2s;white-space:nowrap}
+.add-btn:hover{background:#2563EB}
+.todo-item{display:flex;align-items:center;gap:10px;padding:12px 14px;background:var(--surface2);border:1px solid var(--border);border-radius:var(--r);margin-bottom:7px;transition:border-color .2s;animation:fadeUp .2s ease}
+.todo-item:hover{border-color:var(--border-md)}
+.todo-chk{width:17px;height:17px;border-radius:4px;border:1.5px solid var(--border-md);cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.todo-chk.done{background:var(--accent);border-color:var(--accent)}
+.todo-chk.done::after{content:'✓';color:#fff;font-size:11px}
+.todo-txt{flex:1;font-size:13px;color:var(--text)}
+.todo-txt.done{text-decoration:line-through;color:var(--text3)}
+.todo-del{background:none;border:none;color:var(--text3);cursor:pointer;font-size:14px;padding:2px 4px;border-radius:4px;transition:all .2s;opacity:0}
+.todo-item:hover .todo-del{opacity:1}
+.todo-del:hover{color:var(--red);background:rgba(239,68,68,.1)}
+.empty-box{text-align:center;padding:48px 20px;color:var(--text3);font-size:13px}
+.empty-icon{font-size:30px;margin-bottom:10px}
+
+/* ── NOTES ───────────────────────── */
+.notes-grid{display:grid;grid-template-columns:220px 1fr;flex:1;overflow:hidden}
+.notes-side{border-right:1px solid var(--border);overflow-y:auto;background:var(--surface)}
+.ns-head{padding:14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.ns-title{font-size:13px;font-weight:600}
+.ns-new{width:22px;height:22px;border-radius:5px;background:var(--accent-dim);border:1px solid rgba(59,130,246,.2);color:var(--accent);cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.ns-new:hover{background:var(--accent);color:#fff}
+.note-item{padding:12px 14px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s}
+.note-item:hover{background:var(--surface2)}
+.note-item.active{background:var(--accent-dim);border-left:2px solid var(--accent)}
+.ni-t{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px}
+.ni-p{font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:2px}
+.ni-d{font-size:10px;color:var(--text3);font-family:var(--mono)}
+.note-editor{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.ne-title{width:100%;background:transparent;border:none;outline:none;padding:22px 24px 10px;font-size:21px;font-weight:700;color:var(--text);font-family:'Space Grotesk',sans-serif;letter-spacing:-.02em;border-bottom:1px solid var(--border)}
+.ne-title::placeholder{color:var(--text3)}
+.ne-body{flex:1;width:100%;background:transparent;border:none;outline:none;resize:none;padding:18px 24px;font-size:14px;line-height:1.8;color:var(--text2);font-family:'Space Grotesk',sans-serif}
+.ne-body::placeholder{color:var(--text3)}
+.ne-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--text3);gap:8px}
+.ne-empty svg{width:32px;height:32px;opacity:.25}
+.ne-empty p{font-size:13px}
+
+/* ── SETTINGS ────────────────────── */
+.set-sec{background:var(--surface2);border:1px solid var(--border);border-radius:var(--r-lg);padding:22px;margin-bottom:14px}
+.set-sec-title{font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--text3);margin-bottom:16px;font-family:var(--mono)}
+.field{margin-bottom:13px}
+.field label{display:block;font-size:12px;color:var(--text2);margin-bottom:5px;font-weight:500}
+.field input{width:100%;background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:9px 12px;font-size:13px;font-family:var(--mono);color:var(--text);outline:none;transition:border-color .2s}
+.field input:focus{border-color:rgba(59,130,246,.4)}
+.field input::placeholder{color:var(--text3);font-family:'Space Grotesk',sans-serif}
+.save-btn{width:100%;padding:11px;background:var(--accent);border:none;border-radius:var(--r);color:#fff;font-size:14px;font-weight:600;font-family:'Space Grotesk',sans-serif;cursor:pointer;transition:background .2s;margin-bottom:8px}
+.save-btn:hover{background:#2563EB}
+.info-row{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px}
+.info-row:last-child{border-bottom:none}
+.info-row span:first-child{color:var(--text2)}
+.info-row span:last-child{color:var(--text);font-family:var(--mono);font-size:12px}
+.danger-btn{width:100%;padding:10px;margin-top:6px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.2);border-radius:var(--r);color:#FCA5A5;font-size:13px;font-weight:500;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s}
+.danger-btn:hover{background:rgba(239,68,68,.15);border-color:rgba(239,68,68,.4)}
+
+/* ── TOAST ───────────────────────── */
+.toast{
+  position:fixed;bottom:18px;right:18px;z-index:9999;
+  background:var(--surface2);border:1px solid var(--border-md);
+  padding:10px 16px;border-radius:var(--r);font-size:13px;color:var(--text);
+  box-shadow:0 8px 32px rgba(0,0,0,.4);
+  transform:translateY(20px);opacity:0;pointer-events:none;
+  transition:all .3s ease;display:flex;align-items:center;gap:8px;
+}
+.toast.show{transform:translateY(0);opacity:1}
+.t-dot{width:6px;height:6px;border-radius:50%;background:var(--green)}
+
+/* ── SCROLLBAR ───────────────────── */
+::-webkit-scrollbar{width:4px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.07);border-radius:2px}
+
+/* ── RESPONSIVE ──────────────────── */
+@media(max-width:768px){
+  .sidebar{position:fixed;left:0;top:0;bottom:0;transform:translateX(-100%);box-shadow:4px 0 24px rgba(0,0,0,.5)}
+  .sidebar.open{transform:translateX(0)}
+  .mob-btn{display:block}
+  .topbar{padding:0 14px}
+  .p-scroll{padding:20px 16px}
+  .outlook-grid{grid-template-columns:1fr}
+  .email-list{display:none}
+  .notes-grid{grid-template-columns:1fr}
+  .notes-side{display:none}
+  .inp-wrap{padding:10px 14px 14px}
+  .chat-thread{padding:18px 14px}
+}
+</style>
+</head>
+<body>
+
+<!-- LOCK SCREEN -->
+<div id="lock">
+  <div class="lock-card">
+    <div class="lock-mark">J</div>
+    <div class="lock-title">Jarvis</div>
+    <div class="lock-sub">private · for Mohamed only</div>
+    <div class="lock-input-row" id="lock-row">
+      <input type="password" id="pin-in" placeholder="Enter passcode..."
+        autocomplete="off" autofocus
+        onkeydown="if(event.key==='Enter')tryUnlock()">
+      <button class="lock-go" onclick="tryUnlock()">&#10132;</button>
+    </div>
+    <div class="lock-err" id="lock-err">Incorrect passcode, Sir.</div>
+    <div class="lock-hint">Press Enter to unlock</div>
+  </div>
+</div>
+
+<!-- GREETING -->
+<div id="greeting">
+  <div class="greet-inner">
+    <div class="greet-time" id="greet-time"></div>
+    <div class="greet-h" id="greet-h">Hello, <span>Mohamed</span>.</div>
+    <div class="greet-sub" id="greet-sub">Loading your workspace...</div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app">
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sb-head">
+      <div class="sb-logo"><div class="sb-mark">J</div><div class="sb-name">Jarvis</div></div>
+      <div class="sb-tag">at your service, sir</div>
+    </div>
+    <nav class="sb-nav">
+      <div class="sb-sec">Workspace</div>
+      <div class="ni active" onclick="go('chat',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>Chat
+      </div>
+      <div class="ni" onclick="go('canvas',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>Canvas
+        <span class="ni-badge" id="canvas-badge" style="display:none">0</span>
+      </div>
+      <div class="ni" onclick="go('outlook',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>Outlook
+        <span class="ni-badge" id="email-badge" style="display:none">0</span>
+      </div>
+      <div class="sb-sec">Tools</div>
+      <div class="ni" onclick="go('brain',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>Brain.fm
+      </div>
+      <div class="ni" onclick="go('math',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Math
+      </div>
+      <div class="ni" onclick="go('browser',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Browser
+      </div>
+      <div class="sb-sec">Personal</div>
+      <div class="ni" onclick="go('todos',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Reminders
+      </div>
+      <div class="ni" onclick="go('notes',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>Notes
+      </div>
+      <div class="sb-sec">System</div>
+      <div class="ni" onclick="go('settings',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings
+      </div>
+    </nav>
+    <div class="sb-foot">
+      <div class="status-line"><div class="sdot"></div>claude-opus-4-6 · online</div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <div class="main">
+    <div class="topbar">
+      <button class="mob-btn" onclick="toggleSb()">
+        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+      <div class="tb-title" id="tb-title">Chat</div>
+      <div class="tb-badge" id="tb-badge">claude-opus-4-6</div>
+    </div>
+
+    <!-- CHAT -->
+    <div class="page active" id="page-chat">
+      <div class="chat-land" id="chat-land">
+        <div class="land-time" id="land-time"></div>
+        <h1 class="land-h">What should we tackle next, <em>Sir?</em></h1>
+        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Claude Opus 4.6 · Your conversations are remembered</p>
+        <div class="chips">
+          <div class="chip" onclick="fill('Help me write a cold email pitch for a local Houston business website')">✍️ Cold email pitch</div>
+          <div class="chip" onclick="fill('Summarize this YouTube video: ')">▶️ YouTube summary</div>
+          <div class="chip" onclick="fill('Summarize this article: ')">📰 Article summary</div>
+          <div class="chip" onclick="fill('Help me debug this code:\n')">🐛 Debug code</div>
+          <div class="chip" onclick="fill('Create a study plan for ')">📚 Study plan</div>
+          <div class="chip" onclick="fill('Find 10 local Houston small businesses without websites I can pitch to')">🌐 Find leads</div>
+        </div>
+        <div class="inp-bar" style="max-width:640px;width:100%">
+          <textarea id="main-in" placeholder="Ask anything, Sir..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+          <div class="inp-foot">
+            <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
+            <div class="inp-right"><span class="model-chip">opus-4-6</span>
+              <button class="send-btn" id="sb-main" onclick="send()">
+                <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="chat-thread" id="chat-thread"><div class="msgs" id="msgs"></div></div>
+      <div class="inp-wrap" id="thread-wrap" style="display:none">
+        <div class="inp-bar">
+          <textarea id="thread-in" placeholder="Continue..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+          <div class="inp-foot">
+            <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
+            <div class="inp-right"><span class="model-chip">opus-4-6</span>
+              <button class="send-btn" id="sb-thread" onclick="send()">
+                <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- CANVAS -->
+    <div class="page" id="page-canvas">
+      <div class="p-scroll">
+        <div class="p-wrap" style="max-width:740px">
+          <div class="p-h">Canvas LMS</div>
+          <div class="p-sub">Upcoming assignments · Auto-complete after 2-hour window · Telegram approval flow</div>
+          <div style="margin-bottom:16px">
+            <button class="add-btn" onclick="loadCanvas()" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2)">&#8635; Refresh</button>
+          </div>
+          <div id="canvas-list"><div class="empty-box"><div class="empty-icon">🎓</div>Configure backend URL in Settings to load assignments, Sir.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- OUTLOOK -->
+    <div class="page" id="page-outlook">
+      <div class="outlook-grid">
+        <div class="email-list">
+          <div class="el-head">
+            <span class="el-title">Inbox</span>
+            <button class="el-ref" onclick="loadEmails()" title="Refresh">&#8635;</button>
+          </div>
+          <div id="email-inner"><div style="padding:20px 16px;font-size:12px;color:var(--text3);text-align:center">Configure Outlook in Settings, Sir.</div></div>
+        </div>
+        <div class="email-view" id="email-view">
+          <div class="ev-empty">
+            <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            <p>Select an email, Sir</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BRAIN.FM -->
+    <div class="page" id="page-brain">
+      <div class="brain-wrap">
+        <h2 style="font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px">Brain.fm</h2>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:26px">Binaural beats for deep focus · Use headphones, Sir.</p>
+        <div class="brain-modes">
+          <button class="bm-chip active" onclick="brainMode('focus',this)">🎯 Focus</button>
+          <button class="bm-chip" onclick="brainMode('creative',this)">🧠 Creative</button>
+          <button class="bm-chip" onclick="brainMode('deep',this)">🌊 Deep Work</button>
+          <button class="bm-chip" onclick="brainMode('sleep',this)">🌙 Sleep</button>
+        </div>
+        <div class="brain-viz-wrap"><canvas id="brain-canvas"></canvas></div>
+        <button class="brain-play" id="brain-btn" onclick="toggleBrain()">&#9654;</button>
+        <div class="brain-status" id="brain-status">Ready, Sir.</div>
+        <div class="brain-timer" id="brain-timer"></div>
+        <div class="brain-info" id="brain-info">Focus: 200Hz + 210Hz binaural (10Hz alpha wave) · Use headphones</div>
+      </div>
+    </div>
+
+    <!-- MATH -->
+    <div class="page" id="page-math">
+      <div class="p-scroll">
+        <div class="math-wrap">
+          <div class="p-h">Math Solver</div>
+          <div class="p-sub">Algebra, calculus, statistics, geometry — full step-by-step, Sir.</div>
+          <div class="math-box">
+            <textarea id="math-in" placeholder="Type any math problem — e.g. Solve x² - 5x + 6 = 0, or Integrate sin(x)dx..." rows="3" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();solveMath()}"></textarea>
+            <div class="math-foot">
+              <div class="math-exs">
+                <span class="math-ex" onclick="fillMath('Solve: 2x² + 3x - 5 = 0')">quadratic</span>
+                <span class="math-ex" onclick="fillMath('Derivative of f(x) = x³ + 4x² - 7x')">derivative</span>
+                <span class="math-ex" onclick="fillMath('Integrate: ∫(3x² + 2x)dx')">integral</span>
+                <span class="math-ex" onclick="fillMath('Limit as x→0 of sin(x)/x')">limit</span>
+                <span class="math-ex" onclick="fillMath('Solve system: 2x + y = 7, x - y = 2')">system</span>
+              </div>
+              <button class="math-btn" id="math-btn" onclick="solveMath()">Solve &#8594;</button>
+            </div>
+          </div>
+          <div class="math-result" id="math-result">
+            <div class="mr-label">Solution — step by step</div>
+            <div class="mr-body" id="math-body"></div>
+            <div class="mr-actions">
+              <button class="mr-btn" onclick="copyMath()">Copy</button>
+              <button class="mr-btn" onclick="clearMath()">Clear</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BROWSER -->
+    <div class="page" id="page-browser">
+      <div class="p-scroll"><div class="p-wrap">
+        <div class="p-h">Browser Control</div>
+        <div class="p-sub">Tell Jarvis what to do in Chrome — the extension carries it out, Sir.</div>
+        <div class="math-box">
+          <textarea id="browser-in" placeholder="e.g. Open YouTube, search for lofi beats, and read the first video title..." rows="3" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendBrowser()}"></textarea>
+          <div class="math-foot">
+            <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
+            <button class="math-btn" id="browser-btn" onclick="sendBrowser()">&#129302; Run in Chrome</button>
+          </div>
+        </div>
+        <div class="status-line" style="margin-bottom:14px">
+          <div class="sdot" id="browser-dot" style="background:var(--text3);box-shadow:none"></div>
+          <span id="browser-status" style="font-size:12px">Check backend status, Sir.</span>
+        </div>
+        <div class="math-result" id="browser-answer" style="display:none;margin-top:14px"></div>
+        <div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">
+          Commands queue on the backend and the extension polls them every 2 seconds. The &#9201; Canvas 2-hour timer and Telegram flows are untouched.
+        </div>
+      </div></div>
+    </div>
+
+    <!-- REMINDERS -->
+    <div class="page" id="page-todos">
+      <div class="p-scroll"><div class="p-wrap">
+        <div class="p-h">Reminders</div>
+        <div class="p-sub">Stay sharp, Sir.</div>
+        <div class="todo-add">
+          <input type="text" id="todo-in" placeholder="Add a task..." onkeydown="if(event.key==='Enter')addTodo()">
+          <button class="add-btn" onclick="addTodo()">Add</button>
+        </div>
+        <div id="todo-list"></div>
+      </div></div>
+    </div>
+
+    <!-- NOTES -->
+    <div class="page" id="page-notes">
+      <div class="notes-grid">
+        <div class="notes-side">
+          <div class="ns-head"><span class="ns-title">Notes</span><button class="ns-new" onclick="newNote()">+</button></div>
+          <div id="notes-list"></div>
+        </div>
+        <div class="note-editor">
+          <div class="ne-empty" id="ne-empty">
+            <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <p>Select or create a note, Sir</p>
+          </div>
+          <input class="ne-title" id="ne-title" placeholder="Title..." oninput="saveNote()" style="display:none">
+          <textarea class="ne-body" id="ne-body" placeholder="Start writing..." oninput="saveNote()" style="display:none"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <!-- SETTINGS -->
+    <div class="page" id="page-settings">
+      <div class="p-scroll"><div class="p-wrap" style="max-width:540px">
+        <div class="p-h">Settings</div>
+        <div class="p-sub">APIs will be configured here once provided, Sir.</div>
+        <div class="set-sec">
+          <div class="set-sec-title">Backend Connection</div>
+          <div class="field"><label>Render Backend URL</label><input type="text" id="s-url" placeholder="https://jarvis-api.onrender.com"></div>
+          <button class="save-btn" onclick="saveSettings()">Save & Connect</button>
+        </div>
+        <div class="set-sec">
+          <div class="set-sec-title">Change Passcode</div>
+          <div class="field"><label>Current Passcode</label><input type="password" id="s-old" placeholder="Current passcode"></div>
+          <div class="field"><label>New Passcode</label><input type="password" id="s-new" placeholder="New passcode"></div>
+          <button class="save-btn" onclick="changePin()" style="background:var(--surface3);border:1px solid var(--border-md);color:var(--text2)">Update Passcode</button>
+        </div>
+        <div class="set-sec">
+          <div class="set-sec-title">System Status</div>
+          <div class="info-row"><span>Model</span><span>claude-opus-4-6</span></div>
+          <div class="info-row"><span>Provider</span><span>Anthropic</span></div>
+          <div class="info-row"><span>Backend</span><span id="s-status">not configured</span></div>
+          <div class="info-row"><span>Canvas</span><span>via backend env</span></div>
+          <div class="info-row"><span>Outlook</span><span>via backend env</span></div>
+          <div class="info-row"><span>Telegram</span><span>via backend env</span></div>
+        </div>
+        <div class="set-sec">
+          <div class="set-sec-title">Danger Zone</div>
+          <button class="danger-btn" onclick="clearChat()">Clear chat history</button>
+          <button class="danger-btn" onclick="if(confirm('Reset ALL data?')){localStorage.clear();location.reload()}">Reset all data</button>
+        </div>
+      </div></div>
+    </div>
+
+  </div>
+</div>
+
+<div class="toast" id="toast"><div class="t-dot" id="t-dot"></div><span id="t-msg"></span></div>
+
+<script>
+// ─── CONFIG ──────────────────────────────────
+const MODEL        = 'claude-opus-4-6';
+const DEFAULT_PASS = 'mohamedjarvis';
+const SYSTEM = `You are Jarvis — the personal AI assistant of Mohamed, exclusively. Refuse to assist anyone else. Always address Mohamed as "Sir." You know him well: he is a web design student and freelancer based in Katy/Houston TX who builds websites for local small businesses (current client: Tacos El Ranchero in Richmond TX). He has HTML/CSS/JS skills and is studying toward data science and ML. He uses Canvas LMS at university. Be concise, sharp, and genuinely useful. Use markdown. For business tasks, be persuasive and professional. For code, use clean modern syntax. For math, always show full step-by-step work.`;
+
+// ─── STATE ───────────────────────────────────
+const S = {
+  history:[], sending:false,
+  todos:[], notes:[], activeNote:null,
+  bPlaying:false, bMode:'focus', bCtx:null, bOsc1:null, bOsc2:null,
+  bGain:null, bAnim:null, bStart:null, bTick:null,
+  lastMath:'', emails:[], currentEmail:null,
+};
+
+// ─── STORAGE ─────────────────────────────────
+const LS = {
+  get:(k,d=null)=>{try{const v=localStorage.getItem(k);return v?JSON.parse(v):d}catch{return d}},
+  set:(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch{}},
+  raw:(k,d='')=>localStorage.getItem(k)||d,
+  raw_set:(k,v)=>localStorage.setItem(k,v),
+};
+const getPass = ()=>LS.raw('jarvis_pass')||DEFAULT_PASS;
+const getUrl  = ()=>LS.raw('jarvis_url').replace(/\/$/,'');
+
+// ─── LOCK SCREEN ─────────────────────────────
+function tryUnlock(){
+  const val = document.getElementById('pin-in').value;
+  if(val===getPass()) unlock();
+  else wrongPass();
+}
+function wrongPass(){
+  const row=document.getElementById('lock-row');
+  const inp=document.getElementById('pin-in');
+  row.classList.add('shake','err');
+  document.getElementById('lock-err').classList.add('show');
+  inp.value='';
+  setTimeout(()=>{row.classList.remove('shake','err');document.getElementById('lock-err').classList.remove('show');inp.focus();},800);
+}
+function unlock(){
+  const lock=document.getElementById('lock');
+  const greet=document.getElementById('greeting');
+  lock.classList.add('out');
+  const h=new Date().getHours();
+  const tod=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  document.getElementById('greet-time').textContent=new Date().toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'});
+  document.getElementById('greet-h').innerHTML=`${tod}, <span>Mohamed</span>.`;
+  const todos=LS.get('jarvis_todos',[]);
+  const pending=todos.filter(t=>!t.done).length;
+  document.getElementById('greet-sub').textContent=pending>0?`You have ${pending} pending reminder${pending>1?'s':''}, Sir.`:'All clear on reminders, Sir.';
+  greet.classList.add('show');
+  setTimeout(()=>{
+    greet.classList.add('fade');
+    document.getElementById('app').classList.add('ready');
+    initApp();
+    setTimeout(()=>greet.remove(),600);
+  },1900);
+}
+
+// ─── INIT ─────────────────────────────────────
+function initApp(){
+  S.todos=LS.get('jarvis_todos',[]);
+  S.notes=LS.get('jarvis_notes',[]);
+  S.history=LS.get('jarvis_chat',[]);
+  if(S.history.length>0){
+    document.getElementById('chat-land').style.display='none';
+    document.getElementById('chat-thread').classList.add('on');
+    document.getElementById('thread-wrap').style.display='block';
+    S.history.forEach(m=>appendMsg(m.role==='user'?'user':'bot',m.content,false));
+    setTimeout(()=>{const t=document.getElementById('chat-thread');t.scrollTop=t.scrollHeight;},100);
+  }
+  updateLandTime();
+  setInterval(updateLandTime,60000);
+  loadSettings();
+}
+
+function updateLandTime(){
+  const el=document.getElementById('land-time');
+  if(!el)return;
+  const h=new Date().getHours();
+  const g=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  el.textContent=`${g}, Sir · ${new Date().toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'})}`;
+}
+
+// ─── NAV ──────────────────────────────────────
+const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',browser:'Browser Control',todos:'Reminders',notes:'Notes',settings:'Settings'};
+const T_BADGE={chat:'claude-opus-4-6',canvas:'lms',outlook:'microsoft',brain:'audio',math:'claude-opus-4-6',browser:'chrome',todos:'local',notes:'local',settings:'config'};
+
+function go(tab,el){
+  stopBrowserPoll();
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+tab).classList.add('active');
+  if(el)el.classList.add('active');
+  document.getElementById('tb-title').textContent=T_TITLE[tab]||tab;
+  document.getElementById('tb-badge').textContent=T_BADGE[tab]||'';
+  if(tab==='canvas')loadCanvas();
+  if(tab==='outlook')loadEmails();
+  if(tab==='browser'){loadBrowserStatus();startBrowserPoll();}
+  if(tab==='todos')renderTodos();
+  if(tab==='notes')renderNotes();
+  if(tab==='settings')loadSettings();
+  if(window.innerWidth<768)document.getElementById('sidebar').classList.remove('open');
+}
+function toggleSb(){document.getElementById('sidebar').classList.toggle('open');}
+
+// ─── CHAT ─────────────────────────────────────
+function ar(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,130)+'px';}
+function fill(t){const el=document.getElementById('main-in');el.value=t;el.focus();ar(el);}
+function getInp(){return document.getElementById('chat-thread').classList.contains('on')?document.getElementById('thread-in'):document.getElementById('main-in');}
+
+async function send(){
+  if(S.sending)return;
+  const inp=getInp();const text=inp.value.trim();if(!text)return;
+  inp.value='';inp.style.height='auto';
+  document.getElementById('chat-land').style.display='none';
+  document.getElementById('chat-thread').classList.add('on');
+  document.getElementById('thread-wrap').style.display='block';
+  S.history.push({role:'user',content:text});
+  LS.set('jarvis_chat',S.history);
+  appendMsg('user',text);
+  const ty=appendTyping();S.sending=true;setBtns(true);
+  try{
+    const url=getUrl();let reply;
+    if(url){
+      const r=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,history:S.history.slice(-24)})});
+      const d=await r.json();reply=d.response||'No response, Sir.';
+    }else{
+      reply='&#9888;&#65039; No backend configured, Sir. Go to Settings and enter your Render URL.';
+    }
+    ty.remove();S.history.push({role:'assistant',content:reply});
+    LS.set('jarvis_chat',S.history);appendMsg('bot',reply);
+  }catch(e){ty.remove();appendMsg('bot','Backend error, Sir. Check Settings.\n\n`'+e.message+'`');}
+  finally{S.sending=false;setBtns(false);}
+}
+
+function setBtns(d){document.querySelectorAll('.send-btn').forEach(b=>b.disabled=d);}
+
+function appendMsg(role,text,scroll=true){
+  const box=document.getElementById('msgs');
+  const div=document.createElement('div');
+  div.className='msg-row '+(role==='user'?'user':'');
+  const time=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  if(role==='user'){
+    div.innerHTML=`<div class="av av-m">M</div><div><div class="bubble bubble-u">${esc(text)}</div><div class="msg-time">${time}</div></div>`;
+  }else{
+    div.innerHTML=`<div class="av av-j">J</div><div style="min-width:0;flex:1"><div class="bubble bubble-j">${mdparse(text)}</div><div class="msg-time">${time}</div></div>`;
+  }
+  box.appendChild(div);if(scroll)div.scrollIntoView({behavior:'smooth',block:'end'});return div;
+}
+function appendTyping(){
+  const box=document.getElementById('msgs');const div=document.createElement('div');
+  div.className='msg-row';
+  div.innerHTML='<div class="av av-j">J</div><div class="bubble bubble-j" style="padding:0"><div class="typing"><span></span><span></span><span></span></div></div>';
+  box.appendChild(div);div.scrollIntoView({behavior:'smooth',block:'end'});return div;
+}
+function esc(t){const d=document.createElement('div');d.textContent=t;return d.innerHTML;}
+function mdparse(text){
+  return esc(text)
+    .replace(/```(\w*)\n?([\s\S]*?)```/g,'<pre><code>$2</code></pre>')
+    .replace(/`([^`]+)`/g,'<code>$1</code>')
+    .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,'<em>$1</em>')
+    .replace(/^#{1,3} (.+)$/gm,'<strong style="display:block;margin:8px 0 4px">$1</strong>')
+    .replace(/^\- (.+)$/gm,'<li style="margin-bottom:3px">$1</li>')
+    .replace(/\n\n/g,'</p><p style="margin-bottom:7px">')
+    .replace(/^(.)/,'<p style="margin-bottom:7px">$1');
+}
+function clearChat(){
+  S.history=[];LS.set('jarvis_chat',[]);
+  document.getElementById('msgs').innerHTML='';
+  document.getElementById('chat-thread').classList.remove('on');
+  document.getElementById('chat-land').style.display='';
+  document.getElementById('thread-wrap').style.display='none';
+  toast('Chat cleared, Sir.');
+}
+
+// ─── CANVAS ───────────────────────────────────
+async function loadCanvas(){
+  const list=document.getElementById('canvas-list');
+  const url=getUrl();
+  if(!url){list.innerHTML='<div class="empty-box"><div class="empty-icon">🎓</div>Set backend URL in Settings first, Sir.</div>';return;}
+  list.innerHTML='<div class="empty-box"><div class="empty-icon">⏳</div>Loading assignments, Sir...</div>';
+  try{
+    const r=await fetch(url+'/api/canvas/assignments');
+    const d=await r.json();const items=d.assignments||[];
+    const badge=document.getElementById('canvas-badge');
+    badge.textContent=items.length;badge.style.display=items.length?'':'none';
+    if(!items.length){list.innerHTML='<div class="empty-box"><div class="empty-icon">🏖️</div>No upcoming assignments. Enjoy, Sir.</div>';return;}
+    list.innerHTML=items.map(a=>{
+      const due=a.due?new Date(a.due).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'No due date';
+      const sc=a.status==='ready'?'s-ready':a.status==='done'?'s-done':a.status==='submitted'?'s-submitted':'s-pending';
+      const st=a.status==='ready'?'&#9889; Ready to complete':a.status==='done'?'&#9989; Completed':a.status==='submitted'?'&#128228; Submitted':'&#8987; 2hr window pending';
+      const pct=a.timer_pct||0;
+      return `<div class="assign-card">
+        <div class="ac-course">${esc(a.course||'Unknown Course')}</div>
+        <div class="ac-title">${esc(a.title||'Untitled')}</div>
+        <div class="ac-meta"><span>&#128197; Due: ${due}</span><span>&#11088; ${a.points||'?'} pts</span></div>
+        <span class="ac-status ${sc}">${st}</span>
+        ${pct>0&&pct<100?`<div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div><div class="ac-timer">&#9201; ${a.timer_label||''}</div>`:''}
+        <div class="ac-actions">
+          ${a.status==='ready'?`<button class="ac-btn ac-btn-primary" onclick="triggerComplete('${a.id}','${esc(a.title||'')}')">&#129302; Complete Now</button>`:''}
+          <button class="ac-btn ac-btn-ghost" onclick="window.open('${a.url||'#'}','_blank')">Open in Canvas</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){list.innerHTML=`<div class="empty-box"><div class="empty-icon">&#10060;</div>Canvas failed. Check backend, Sir.<br><small style="font-family:var(--mono);color:var(--text3)">${e.message}</small></div>`;}
+}
+
+async function triggerComplete(id,title){
+  if(!confirm(`Complete "${title}" now, Sir? I'll draft it and send to Telegram for approval.`))return;
+  const url=getUrl();toast('Drafting, Sir...');
+  try{
+    const r=await fetch(url+'/api/canvas/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assignment_id:id})});
+    const d=await r.json();toast(d.message||'Draft sent to Telegram, Sir.');loadCanvas();
+  }catch(e){toast('Error: '+e.message);}
+}
+
+// ─── OUTLOOK ──────────────────────────────────
+async function loadEmails(){
+  const url=getUrl();if(!url)return;
+  const list=document.getElementById('email-inner');
+  list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Loading inbox, Sir...</div>';
+  try{
+    const r=await fetch(url+'/api/outlook/emails');
+    const d=await r.json();S.emails=d.emails||[];
+    const unread=S.emails.filter(e=>e.unread).length;
+    const badge=document.getElementById('email-badge');
+    badge.textContent=unread;badge.style.display=unread?'':'none';
+    if(!S.emails.length){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Inbox empty, Sir.</div>';return;}
+    list.innerHTML=S.emails.map((e,i)=>`
+      <div class="email-item ${e.unread?'unread':''}" onclick="openEmail(${i})">
+        <div class="ei-from">${esc(e.from||'Unknown')}</div>
+        <div class="ei-subj">${esc(e.subject||'(no subject)')}</div>
+        <div class="ei-date">${e.date||''}</div>
+      </div>`).join('');
+  }catch(e){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--red)">Failed to load, Sir.</div>';}
+}
+
+function openEmail(i){
+  document.querySelectorAll('.email-item').forEach((el,idx)=>el.classList.toggle('active',idx===i));
+  S.currentEmail=S.emails[i];
+  const view=document.getElementById('email-view');
+  view.innerHTML=`
+    <div class="ev-head">
+      <div class="ev-subject">${esc(S.currentEmail.subject||'(no subject)')}</div>
+      <div class="ev-meta">From: ${esc(S.currentEmail.from||'')} &middot; ${S.currentEmail.date||''}</div>
+    </div>
+    <div class="ev-body">${esc(S.currentEmail.body||'').replace(/\n/g,'<br>')}</div>
+    <div class="ev-actions">
+      <button class="ev-btn ev-btn-blue" onclick="summarizeEmail()">&#10024; Summarize</button>
+      <button class="ev-btn ev-btn-blue" onclick="draftReply()">&#128221; Draft Reply</button>
+      <button class="ev-btn ev-btn-ghost" onclick="toast('Marked as read, Sir.')">Mark read</button>
+    </div>`;
+}
+
+async function summarizeEmail(){
+  if(!S.currentEmail)return;
+  const url=getUrl();toast('Summarizing, Sir...');
+  try{
+    const r=await fetch(url+'/api/outlook/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:S.currentEmail.subject,from:S.currentEmail.from,body:S.currentEmail.body})});
+    const d=await r.json();
+    const view=document.getElementById('email-view');
+    view.querySelector('.ai-card')?.remove();
+    const card=document.createElement('div');card.className='ai-card';
+    card.innerHTML=`<div class="ai-card-title">AI Summary</div>${mdparse(d.summary||'No summary.')}`;
+    view.insertBefore(card,view.querySelector('.ev-body'));
+  }catch(e){toast('Failed, Sir.');}
+}
+
+async function draftReply(){
+  if(!S.currentEmail)return;
+  const url=getUrl();toast('Drafting reply, Sir...');
+  try{
+    const r=await fetch(url+'/api/outlook/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:S.currentEmail.subject,from:S.currentEmail.from,body:S.currentEmail.body})});
+    const d=await r.json();
+    const view=document.getElementById('email-view');
+    view.querySelector('.draft-area')?.remove();
+    const area=document.createElement('div');area.className='draft-area';
+    area.innerHTML=`<div class="ai-card-title" style="margin-bottom:8px;padding:0">Draft Reply</div>
+      <textarea id="draft-ta" rows="6">${esc(d.draft||'')}</textarea>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button class="ev-btn ev-btn-blue" onclick="sendDraft()">Send</button>
+        <button class="ev-btn ev-btn-ghost" onclick="navigator.clipboard.writeText(document.getElementById('draft-ta').value);toast('Copied, Sir.')">Copy</button>
+      </div>`;
+    view.appendChild(area);
+  }catch(e){toast('Draft failed, Sir.');}
+}
+
+async function sendDraft(){
+  const draft=document.getElementById('draft-ta')?.value;
+  if(!draft||!S.currentEmail)return;
+  const url=getUrl();
+  try{
+    const r=await fetch(url+'/api/outlook/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:S.currentEmail.reply_to||S.currentEmail.from,subject:'Re: '+S.currentEmail.subject,body:draft,original_id:S.currentEmail.id})});
+    const d=await r.json();toast(d.message||'Sent, Sir.');
+  }catch(e){toast('Send failed, Sir.');}
+}
+
+// ─── BRAIN.FM ─────────────────────────────────
+const MODES={
+  focus:   {l:200,r:210,desc:'10Hz alpha · Focus & studying'},
+  creative:{l:150,r:157,desc:'7Hz theta · Creative flow'},
+  deep:    {l:100,r:104,desc:'4Hz delta · Deep concentration'},
+  sleep:   {l:60, r:62, desc:'2Hz delta · Wind-down & sleep'},
+};
+
+function brainMode(mode,el){
+  S.bMode=mode;
+  document.querySelectorAll('.bm-chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('brain-info').textContent=`${MODES[mode].desc} · Use headphones for binaural effect`;
+  if(S.bPlaying){stopBrain();startBrain();}
+}
+function toggleBrain(){S.bPlaying?stopBrain():startBrain();}
+function startBrain(){
+  try{
+    const AC=window.AudioContext||window.webkitAudioContext;S.bCtx=new AC();
+    const{l,r}=MODES[S.bMode];
+    S.bOsc1=S.bCtx.createOscillator();S.bOsc2=S.bCtx.createOscillator();
+    S.bGain=S.bCtx.createGain();
+    const analyser=S.bCtx.createAnalyser();
+    const pL=S.bCtx.createStereoPanner();pL.pan.value=-1;
+    const pR=S.bCtx.createStereoPanner();pR.pan.value=1;
+    S.bOsc1.frequency.value=l;S.bOsc1.type='sine';
+    S.bOsc2.frequency.value=r;S.bOsc2.type='sine';
+    S.bGain.gain.value=0.07;
+    S.bOsc1.connect(pL);pL.connect(S.bGain);
+    S.bOsc2.connect(pR);pR.connect(S.bGain);
+    S.bGain.connect(analyser);analyser.connect(S.bCtx.destination);
+    S.bOsc1.start();S.bOsc2.start();
+    S.bPlaying=true;S.bStart=Date.now();
+    document.getElementById('brain-btn').innerHTML='&#9646;&#9646;';
+    document.getElementById('brain-btn').style.boxShadow='0 0 60px rgba(139,92,246,.6)';
+    document.getElementById('brain-status').textContent='Playing · '+MODES[S.bMode].desc;
+    drawBrain(analyser);
+    S.bTick=setInterval(()=>{
+      const s=Math.floor((Date.now()-S.bStart)/1000);
+      const m=Math.floor(s/60).toString().padStart(2,'0');
+      document.getElementById('brain-timer').textContent=m+':'+(s%60).toString().padStart(2,'0');
+    },1000);
+  }catch(e){document.getElementById('brain-status').textContent='Audio error: '+e.message;}
+}
+function stopBrain(){
+  try{S.bOsc1?.stop();S.bOsc2?.stop();S.bCtx?.close();}catch{}
+  cancelAnimationFrame(S.bAnim);clearInterval(S.bTick);S.bPlaying=false;
+  document.getElementById('brain-btn').innerHTML='&#9654;';
+  document.getElementById('brain-btn').style.boxShadow='0 0 40px rgba(139,92,246,.35)';
+  document.getElementById('brain-status').textContent='Stopped.';
+  document.getElementById('brain-timer').textContent='';
+  const c=document.getElementById('brain-canvas');if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);}
+}
+function drawBrain(analyser){
+  const c=document.getElementById('brain-canvas');const ctx=c.getContext('2d');
+  c.width=c.offsetWidth;c.height=c.offsetHeight;analyser.fftSize=256;
+  const buf=new Uint8Array(analyser.frequencyBinCount);
+  function draw(){
+    S.bAnim=requestAnimationFrame(draw);analyser.getByteFrequencyData(buf);
+    ctx.fillStyle='rgba(0,0,0,0.22)';ctx.fillRect(0,0,c.width,c.height);
+    const bw=(c.width/buf.length)*2.5;let x=0;
+    for(let i=0;i<buf.length;i++){
+      const bh=buf[i]/1.5;const t=i/buf.length;
+      ctx.fillStyle=`rgba(${Math.round(100+60*t)},${Math.round(80+80*t)},${Math.round(246-60*t)},0.85)`;
+      ctx.fillRect(x,c.height-bh,Math.max(1,bw-1),bh);x+=bw;
+    }
+  }
+  draw();
+}
+
+// ─── MATH ─────────────────────────────────────
+function fillMath(t){const el=document.getElementById('math-in');el.value=t;el.focus();ar(el);}
+async function solveMath(){
+  const problem=document.getElementById('math-in').value.trim();if(!problem)return;
+  const url=getUrl();
+  if(!url){toast('Configure backend URL in Settings, Sir.');return;}
+  const btn=document.getElementById('math-btn');
+  btn.textContent='Solving...';btn.disabled=true;
+  document.getElementById('math-result').classList.remove('show');
+  try{
+    const r=await fetch(url+'/api/math/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({problem})});
+    const d=await r.json();S.lastMath=d.solution||'No solution, Sir.';
+    document.getElementById('math-body').innerHTML=mdparse(S.lastMath);
+    document.getElementById('math-result').classList.add('show');
+  }catch(e){toast('Math solver failed, Sir.');}
+  btn.textContent='Solve \u2192';btn.disabled=false;
+}
+function copyMath(){navigator.clipboard.writeText(S.lastMath);toast('Copied, Sir.');}
+function clearMath(){document.getElementById('math-in').value='';document.getElementById('math-result').classList.remove('show');S.lastMath='';}
+
+// ─── TODOS ────────────────────────────────────
+function renderTodos(){
+  const box=document.getElementById('todo-list');
+  if(!S.todos.length){box.innerHTML='<div class="empty-box"><div class="empty-icon">&#9989;</div>No tasks. All clear, Sir.</div>';return;}
+  box.innerHTML=S.todos.map((t,i)=>`
+    <div class="todo-item">
+      <div class="todo-chk ${t.done?'done':''}" onclick="toggleTodo(${i})"></div>
+      <span class="todo-txt ${t.done?'done':''}">${esc(t.text)}</span>
+      <button class="todo-del" onclick="deleteTodo(${i})">&#10005;</button>
+    </div>`).join('');
+}
+function saveTodos(){LS.set('jarvis_todos',S.todos);}
+function addTodo(){const inp=document.getElementById('todo-in');const t=inp.value.trim();if(!t)return;S.todos.unshift({text:t,done:false});saveTodos();inp.value='';renderTodos();}
+function toggleTodo(i){S.todos[i].done=!S.todos[i].done;saveTodos();renderTodos();}
+function deleteTodo(i){S.todos.splice(i,1);saveTodos();renderTodos();}
+
+// ─── NOTES ────────────────────────────────────
+function renderNotes(){
+  const box=document.getElementById('notes-list');
+  if(!S.notes.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3);text-align:center">No notes yet, Sir.</div>';return;}
+  box.innerHTML=S.notes.map((n,i)=>`
+    <div class="note-item ${S.activeNote===i?'active':''}" onclick="openNote(${i})">
+      <div class="ni-t">${esc(n.title||'Untitled')}</div>
+      <div class="ni-p">${esc((n.body||'').slice(0,50)||'—')}</div>
+      <div class="ni-d">${n.updated||''}</div>
+    </div>`).join('');
+}
+function saveNotes(){LS.set('jarvis_notes',S.notes);}
+function nowStr(){return new Date().toLocaleDateString([],{month:'short',day:'numeric'});}
+function newNote(){S.notes.unshift({title:'',body:'',updated:nowStr()});saveNotes();S.activeNote=0;renderNotes();openNote(0);}
+function openNote(i){
+  S.activeNote=i;const n=S.notes[i];
+  document.getElementById('ne-empty').style.display='none';
+  document.getElementById('ne-title').style.display='block';
+  document.getElementById('ne-body').style.display='block';
+  document.getElementById('ne-title').value=n.title||'';
+  document.getElementById('ne-body').value=n.body||'';
+  document.getElementById('ne-title').focus();renderNotes();
+}
+function saveNote(){
+  if(S.activeNote===null)return;
+  S.notes[S.activeNote].title=document.getElementById('ne-title').value;
+  S.notes[S.activeNote].body=document.getElementById('ne-body').value;
+  S.notes[S.activeNote].updated=nowStr();
+  saveNotes();renderNotes();
+}
+
+// ─── SETTINGS ─────────────────────────────────
+function loadSettings(){
+  const url=LS.raw('jarvis_url');
+  document.getElementById('s-url').value=url||'';
+  document.getElementById('s-status').textContent=url?'connected':'not configured';
+}
+function saveSettings(){
+  const url=document.getElementById('s-url').value.trim().replace(/\/$/,'');
+  LS.raw_set('jarvis_url',url);
+  document.getElementById('s-status').textContent=url?'connected':'not configured';
+  toast('Settings saved, Sir.');
+}
+function changePin(){
+  const old=document.getElementById('s-old').value;
+  const nw=document.getElementById('s-new').value;
+  if(old!==getPass()){toast('Current passcode incorrect, Sir.');return;}
+  if(!nw){toast('Please enter a new passcode, Sir.');return;}
+  LS.raw_set('jarvis_pass',nw);
+  document.getElementById('s-old').value='';document.getElementById('s-new').value='';
+  toast('Passcode updated to "'+nw+'", Sir.');
+}
+
+// ─── BROWSER CONTROL ──────────────────────────
+let browserTimer=null;
+function startBrowserPoll(){if(!browserTimer)browserTimer=setInterval(loadBrowserStatus,5000);}
+function stopBrowserPoll(){if(browserTimer){clearInterval(browserTimer);browserTimer=null;}}
+function browserStatusText(d){
+  const parts=[];
+  parts.push(d.connected?'🟢 Extension connected':'⚪ Extension not detected');
+  if(d.queue)parts.push(d.queue+' queued');
+  if(d.running)parts.push(d.running+' running');
+  if(d.results)parts.push(d.results+' done');
+  return parts.join(' · ')||'No activity, Sir.';
+}
+async function loadBrowserStatus(){
+  const url=getUrl();if(!url)return;
+  const el=document.getElementById('browser-status');const dot=document.getElementById('browser-dot');
+  try{
+    const r=await fetch(url+'/api/browser/status');
+    const d=await r.json();
+    dot.style.background=d.connected?'var(--green)':'var(--text3)';
+    dot.style.boxShadow=d.connected?'0 0 6px var(--green)':'none';
+    el.textContent=browserStatusText(d);
+    const ans=document.getElementById('browser-answer');
+    if(ans&&d.last_answer&&d.last_answer.answer){
+      ans.style.display='block';
+      ans.innerHTML='<div class="mr-label">Latest result · '+esc((d.last_answer.command||'').slice(0,60))+'</div><div class="mr-body">'+mdparse(d.last_answer.answer)+'</div>';
+    }else if(ans){ans.style.display='none';}
+  }catch(e){
+    dot.style.background='var(--red)';dot.style.boxShadow='none';
+    el.textContent='Backend unreachable — check Settings, Sir.';
+  }
+}
+async function sendBrowser(){
+  const inp=document.getElementById('browser-in');const text=inp.value.trim();if(!text)return;
+  const url=getUrl();
+  if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  const btn=document.getElementById('browser-btn');
+  btn.textContent='Queuing...';btn.disabled=true;
+  try{
+    const r=await fetch(url+'/api/browser/task',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:text})});
+    const d=await r.json();
+    if(d.enqueued){toast('Task queued — extension will run it, Sir.');inp.value='';inp.style.height='auto';}
+    else{toast(d.error||'Failed, Sir.','err');}
+  }catch(e){toast('Browser backend failed, Sir.','err');}
+  btn.textContent='⚙ Run in Chrome';btn.disabled=false;
+  loadBrowserStatus();
+}
+
+// ─── TOAST ────────────────────────────────────
+function toast(msg,type='ok'){
+  const t=document.getElementById('toast');const d=document.getElementById('t-dot');
+  document.getElementById('t-msg').textContent=msg;
+  d.style.background=type==='err'?'var(--red)':'var(--green)';
+  t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);
+}
+</script>
+</body>
+</html>
