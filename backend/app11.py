@@ -1,6 +1,6 @@
 """
 JARVIS BACKEND v3.0
-- AI: Groq (free) — llama-3.3-70b-versatile
+- AI: Claude (Anthropic) — claude-fable-5
 - Security: API_SECRET token + CORS whitelist
 - Canvas: 2hr timer + Telegram approval flow
 - Outlook: Background polling every 10 min → Telegram summary + draft approval
@@ -21,8 +21,8 @@ CORS(app, origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else "*",
      allow_headers=["Content-Type", "X-Jarvis-Token"])
 
 # ── CONFIG (all from Render env vars — never hardcode) ────────────────
-GROQ_KEY       = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL     = "llama-3.3-70b-versatile"
+CLAUDE_KEY     = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+CLAUDE_MODEL   = os.getenv("CLAUDE_MODEL", "claude-fable-5")  # or claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5
 API_SECRET     = os.getenv("API_SECRET", "")       # random string you set on Render
 TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -67,22 +67,48 @@ def auth(f):
         return f(*args, **kwargs)
     return decorated
 
-# ── GROQ AI ───────────────────────────────────────────────────────────
-def ask(messages, system=None, max_tokens=2000):
-    if not GROQ_KEY:
-        return "GROQ_API_KEY not set on Render, Sir. Add it in Environment Variables."
-    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    body = {
-        "model": GROQ_MODEL, "max_tokens": max_tokens, "temperature": 0.7,
-        "messages": [{"role": "system", "content": system or SYSTEM}, *messages]
-    }
+# ── CLAUDE AI (Anthropic Messages API) ────────────────────────────────
+def _claude_call(messages, system=None, max_tokens=2000, temperature=0.7):
+    """One call to the Anthropic Messages API. Returns response text, or None."""
+    if not CLAUDE_KEY:
+        return None
+    msgs = []
+    for m in messages or []:
+        role, content = m.get("role"), (m.get("content") or "").strip()
+        if role not in ("user", "assistant") or not content:
+            continue
+        if msgs and msgs[-1]["role"] == role:      # Anthropic expects alternating roles
+            msgs[-1]["content"] += "\n\n" + content
+        else:
+            msgs.append({"role": role, "content": content})
+    while msgs and msgs[0]["role"] == "assistant":  # first turn must be a user message
+        msgs.pop(0)
+    if not msgs:
+        return None
+    headers = {"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01",
+               "content-type": "application/json"}
+    body = {"model": CLAUDE_MODEL, "max_tokens": max_tokens,
+            "temperature": temperature, "messages": msgs}
+    if system:
+        body["system"] = system
     try:
-        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+        r = requests.post("https://api.anthropic.com/v1/messages",
                           headers=headers, json=body, timeout=60)
         r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        data = r.json()
+        return "".join(b.get("text", "") for b in data.get("content", [])
+                       if b.get("type") == "text")
     except Exception as e:
-        return f"AI error, Sir: {e}"
+        print(f"Claude API error: {e}")
+        return None
+
+def ask(messages, system=None, max_tokens=2000, temperature=0.7):
+    """Free-form text completion via Claude."""
+    if not CLAUDE_KEY:
+        return "CLAUDE_API_KEY not set on Render, Sir. Add it in Environment Variables."
+    text = _claude_call(messages, system=system or SYSTEM,
+                        max_tokens=max_tokens, temperature=temperature)
+    return text if text is not None else "AI error, Sir."
 
 # ── TELEGRAM ──────────────────────────────────────────────────────────
 def tg(msg):
@@ -335,24 +361,17 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 Prefer clicking by visible text; add a wait after navigating."""
 
 def ask_json(system, user):
-    """Ask Groq for a JSON object (strip markdown fences if any)."""
-    if not GROQ_KEY:
+    """Ask Claude for a JSON object (strip markdown fences if any)."""
+    if not CLAUDE_KEY:
         return None
-    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
-    body = {"model": GROQ_MODEL, "temperature": 0.2, "max_tokens": 2000,
-            "response_format": {"type": "json_object"},
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
-    try:
-        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
-                          headers=headers, json=body, timeout=60)
-        r.raise_for_status()
-        content = r.json()["choices"][0]["message"]["content"].strip()
-    except Exception:
+    text = _claude_call([{"role": "user", "content": user}], system=system,
+                        max_tokens=2000, temperature=0.2)
+    if not text:
         return None
-    content = re.sub(r"^```[a-z]*\n?", "", content)
-    content = re.sub(r"\n?```$", "", content)
+    text = re.sub(r"^```[a-z]*\n?", "", text.strip())
+    text = re.sub(r"\n?```$", "", text)
     try:
-        return json.loads(content)
+        return json.loads(text)
     except Exception:
         return None
 
@@ -420,7 +439,7 @@ BROWSER_RE = re.compile(
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
-    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir."})
+    return jsonify({"status":"online","model":CLAUDE_MODEL,"message":"Jarvis online, Sir."})
 
 @app.route("/api/chat", methods=["POST"])
 @auth
