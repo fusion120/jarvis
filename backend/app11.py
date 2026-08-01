@@ -42,11 +42,12 @@ SYSTEM = ("You are Jarvis — personal AI assistant to Mohamed exclusively. "
           "For math show full step-by-step work.")
 
 CHAT_SYSTEM = SYSTEM + ("\n\nYou can also control Mohamed's browser through the Jarvis extension. "
-    "If his message asks for a browser action (open a site, search, read a page, screenshot, click, "
-    "fill a form — including multi-step ones like 'open Gmail, summarize the newest messages and give "
-    "me example drafts'), reply normally but END your reply with exactly one line: [[BROWSER]]<short "
-    "imperative command> describing the whole task, e.g. [[BROWSER]]open mail.google.com, read the inbox, "
-    "summarize the 5 newest messages and draft replies. Do NOT add that line for pure chat questions.")
+    "When he asks you to DO something in the browser — open a site, search, read a page, screenshot, "
+    "click, fill a form, or any multi-step task like 'open Gmail, summarize the newest messages and give "
+    "me example drafts' — NEVER explain how to do it yourself. Reply with one short acknowledgment line, "
+    "then END your reply with exactly one line: [[BROWSER]]<short imperative command> describing the whole "
+    "task, e.g. [[BROWSER]]open mail.google.com, read the inbox, summarize the 5 newest messages and draft "
+    "replies. Do NOT add that line for pure chat questions.")
 
 # ── SHARED STATE ──────────────────────────────────────────────────────
 pending          = {}   # approval_id → {type, data}
@@ -408,6 +409,12 @@ def enqueue_browser(command, steps, chain=None):
     browser_queue.append(task)
     return task
 
+# Fallback intent detection: if the model didn't emit [[BROWSER]], still
+# dispatch when the user's message is clearly a browser action.
+BROWSER_RE = re.compile(
+    r"\b(open|go to|navigate|browse|visit|search|look up|google|scroll|click|type in|"
+    r"open on|go on|find on|search on)\b", re.I)
+
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
@@ -424,11 +431,18 @@ def chat():
         hist.append({"role":"user","content":msg})
     reply = ask(hist, system=CHAT_SYSTEM)
 
-    # If Jarvis decided the request needs the browser, dispatch it.
-    m = re.search(r"\[\[BROWSER\]\]\s*([^\[]*)", reply)
+    # Dispatch to the browser when the model tagged it, OR when the user's
+    # request is clearly a browser action and the model just gave text.
     extra = ""
+    m = re.search(r"\[\[BROWSER\]\]\s*([^\[]*)", reply)
+    cmd = None
     if m and m.group(1).strip():
+        reply = re.sub(r"\[\[BROWSER\]\][^\[]*", "", reply).rstrip()
         cmd = m.group(1).strip()
+    elif BROWSER_RE.search(msg):
+        cmd = msg
+
+    if cmd:
         planned = plan_steps(cmd)
         if planned:
             task = enqueue_browser(cmd, planned)
@@ -437,7 +451,6 @@ def chat():
                      f"Your extension is carrying it out — the result lands on the Browser page and Telegram, Sir.")
         else:
             extra = f"\n\n⚠️ Browser: I couldn't plan \"{cmd}\", Sir."
-        reply = re.sub(r"\[\[BROWSER\]\][^\[]*", "", reply).rstrip()
     return jsonify({"response": reply + extra})
 
 @app.route("/api/math/solve", methods=["POST"])
