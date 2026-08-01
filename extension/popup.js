@@ -22,6 +22,10 @@ function save() {
   const url    = document.getElementById('url').value.trim().replace(/\/$/,'');
   const secret = document.getElementById('secret').value.trim();
   chrome.storage.local.set({jarvis_url: url, jarvis_secret: secret}, () => {
+    // Tell the background service worker NOW so it starts polling immediately
+    // (it only reads storage when it starts up — without this message it polls
+    //  with an empty URL until you reload the extension).
+    try { chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', backend: url, secret: secret }); } catch(e) {}
     showMsg('Saved! Testing connection...', 'ok');
     setTimeout(testConn, 500);
   });
