@@ -311,7 +311,7 @@ BROWSER_MAX_ITERS = 12          # guard against infinite agentic loops
 browser_queue     = []          # pending tasks
 browser_running   = {}          # task_id → task being executed
 browser_results   = {}          # task_id → last result
-browser_tab       = {}          # last tab reported by the extension
+browser_tab_state = {}          # last tab reported by the extension
 browser_iters     = {}          # command chain → iterations left
 browser_last_seen = 0.0         # epoch seconds of last tab ping
 browser_answers   = []          # recent finished results {command, answer, ts}
@@ -366,7 +366,7 @@ def sanitize_steps(steps):
 def plan_steps(command):
     """Turn a natural-language command into a first batch of steps."""
     obj = ask_json("You are Jarvis planning browser automation. " + ACTIONS_DOC,
-                   f"Task: {command}\nCurrent tab: {browser_tab.get('url','')} ({browser_tab.get('title','')})")
+                   f"Task: {command}\nCurrent tab: {browser_tab_state.get('url','')} ({browser_tab_state.get('title','')})")
     if not obj:
         return []
     return sanitize_steps(obj.get("steps"))
@@ -569,8 +569,8 @@ def sum_article():
 def browser_tab():
     global browser_last_seen
     d = request.json or {}
-    browser_tab.clear()
-    browser_tab.update({"url": d.get("url",""), "title": d.get("title","")})
+    browser_tab_state.clear()
+    browser_tab_state.update({"url": d.get("url",""), "title": d.get("title","")})
     browser_last_seen = time.time()
     return jsonify({"ok": True})
 
@@ -578,8 +578,8 @@ def browser_tab():
 @auth
 def browser_status():
     return jsonify({
-        "connected": bool(browser_tab) and (time.time() - browser_last_seen) < 60,
-        "tab": browser_tab,
+        "connected": bool(browser_tab_state) and (time.time() - browser_last_seen) < 60,
+        "tab": browser_tab_state,
         "queue": len(browser_queue),
         "running": len(browser_running),
         "results": len(browser_results),
