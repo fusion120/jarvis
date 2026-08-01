@@ -39,7 +39,9 @@ SYSTEM = ("You are Jarvis — personal AI assistant to Mohamed exclusively. "
           "building local business websites. He studies at university using Canvas LMS. "
           "Be concise, sharp, and genuinely helpful. Use markdown. "
           "For business tasks be persuasive and professional. "
-          "For math show full step-by-step work.")
+          "For math show full step-by-step work. "
+          "Never invent features, tabs, or menus (like 'Previous Chats'), never simulate a UI, "
+          "and never announce that conversations are being logged.")
 
 CHAT_SYSTEM = SYSTEM + ("\n\nYou can also control Mohamed's browser through the Jarvis extension. "
     "When he asks you to DO something in the browser — open a site, search, read a page, screenshot, "
@@ -425,11 +427,12 @@ def health():
 def chat():
     d = request.json or {}
     msg  = d.get("message","").strip()
-    hist = [m for m in d.get("history",[]) if m.get("role") in ("user","assistant")][-24:]
+    hist = [{"role": m.get("role"), "content": (m.get("content") or "")[:1500]}
+            for m in d.get("history",[]) if m.get("role") in ("user","assistant")][-10:]
     if not msg: return jsonify({"response":"No message, Sir."}), 400
     if not hist or hist[-1].get("content") != msg:
         hist.append({"role":"user","content":msg})
-    reply = ask(hist, system=CHAT_SYSTEM)
+    reply = ask(hist, system=CHAT_SYSTEM, max_tokens=1200)
 
     # Dispatch to the browser when the model tagged it, OR when the user's
     # request is clearly a browser action and the model just gave text.
