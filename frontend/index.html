@@ -309,6 +309,11 @@ body::before{
 .math-exs{display:flex;gap:6px;flex-wrap:wrap}
 .math-ex{font-size:11px;padding:4px 10px;border-radius:15px;border:1px solid var(--border);background:var(--surface3);color:var(--text3);cursor:pointer;font-family:var(--mono);transition:all .2s}
 .math-ex:hover{color:var(--purple);border-color:rgba(139,92,246,.3)}
+.sk-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 16px}
+.sk-tab{background:var(--surface2);border:1px solid var(--border-md);color:var(--text2);padding:8px 14px;border-radius:999px;font-size:12.5px;cursor:pointer;transition:.15s;font-family:'Space Grotesk',sans-serif}
+.sk-tab:hover{border-color:var(--accent);color:var(--accent)}
+.sk-tab.active{background:var(--accent-dim);border-color:var(--accent);color:var(--accent)}
+.sk-stats{background:var(--surface3);border:1px solid var(--border-md);border-radius:10px;padding:12px 14px;font-family:var(--mono);font-size:12px;color:var(--text2);margin:14px 0;white-space:pre-wrap;overflow:auto}
 .math-btn{font-size:13px;font-weight:600;padding:9px 22px;background:var(--purple);border:none;border-radius:var(--r);color:#fff;cursor:pointer;font-family:'Space Grotesk',sans-serif;transition:all .2s;white-space:nowrap}
 .math-btn:hover{background:#7C3AED}
 .math-btn:disabled{background:var(--surface3);cursor:not-allowed;color:var(--text3)}
@@ -483,6 +488,10 @@ body::before{
       <div class="ni" onclick="go('math',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Math
       </div>
+      <div class="ni" onclick="go('skills',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>Skills
+        <span class="ni-badge" id="skills-badge">10</span>
+      </div>
       <div class="ni" onclick="go('browser',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>Browser
       </div>
@@ -648,6 +657,25 @@ body::before{
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- SKILLS -->
+    <div class="page" id="page-skills">
+      <div class="p-scroll"><div class="p-wrap" style="max-width:780px">
+        <div class="p-h">Skills</div>
+        <div class="p-sub">10 pro skills built in — design, humanizer, SEO, marketing, security, TDD, data analysis, memory. Pick a tool, Sir.</div>
+        <div class="sk-tabs" id="sk-tabs">
+          <button class="sk-tab" onclick="openSkill('design',this)">&#127912; Design</button>
+          <button class="sk-tab" onclick="openSkill('humanize',this)">&#9997;&#65039; Humanize</button>
+          <button class="sk-tab" onclick="openSkill('seo',this)">&#128269; SEO</button>
+          <button class="sk-tab" onclick="openSkill('marketing',this)">&#128200; Marketing</button>
+          <button class="sk-tab" onclick="openSkill('security',this)">&#128737;&#65039; Security</button>
+          <button class="sk-tab" onclick="openSkill('tdd',this)">&#129514; TDD</button>
+          <button class="sk-tab" onclick="openSkill('analyze',this)">&#128202; Data</button>
+          <button class="sk-tab" onclick="openSkill('memory',this)">&#129504; Memory</button>
+        </div>
+        <div id="sk-body"></div>
+      </div></div>
     </div>
 
     <!-- RESEARCH -->
@@ -851,8 +879,8 @@ function updateLandTime(){
 }
 
 // ─── NAV ──────────────────────────────────────
-const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',browser:'Browser Control',research:'Deep Research',todos:'Reminders',notes:'Notes',settings:'Settings'};
-const T_BADGE={chat:'llama-3.3-70b',canvas:'lms',outlook:'microsoft',brain:'audio',math:'llama-3.3-70b',browser:'chrome',research:'search',todos:'local',notes:'local',settings:'config'};
+const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',skills:'Skills',browser:'Browser Control',research:'Deep Research',todos:'Reminders',notes:'Notes',settings:'Settings'};
+const T_BADGE={chat:'llama-3.3-70b',canvas:'lms',outlook:'microsoft',brain:'audio',math:'llama-3.3-70b',skills:'10 pro',browser:'chrome',research:'search',todos:'local',notes:'local',settings:'config'};
 
 function go(tab,el){
   stopBrowserPoll();
@@ -866,6 +894,7 @@ function go(tab,el){
   if(tab==='outlook')loadEmails();
   if(tab==='browser'){loadBrowserStatus();startBrowserPoll();}
   if(tab==='research')renderResearch();
+  if(tab==='skills')openSkill(curSkill);
   if(tab==='todos'){renderTodos();renderReminders();}
   if(tab==='notes')renderNotes();
   if(tab==='settings')loadSettings();
@@ -943,6 +972,85 @@ function clearChat(){
   document.getElementById('chat-land').style.display='';
   document.getElementById('thread-wrap').style.display='none';
   toast('Chat cleared, Sir.');
+}
+
+// ─── SKILLS ───────────────────────────────────
+const SK_TOOLS={
+  design:{ph:'Describe your project — e.g. a landing page for a Houston roofing company, bold and trustworthy',btn:'Generate Design →',exs:['landing page for a Houston roofing company, bold and trustworthy','portfolio for a wedding photographer, soft and elegant','dashboard for a gym training app, energetic']},
+  humanize:{ph:'Paste AI-generated text here and I will make it sound human…',btn:'Humanize →',exs:['AI-written product description']},
+  seo:{ph:'Paste a URL for a live on-page audit, or describe a topic or business…',btn:'SEO Plan →',exs:['https://your-site.com','website for a dental clinic in Katy, TX']},
+  marketing:{ph:'Describe the business — e.g. a local bakery selling custom cakes in Katy…',btn:'Write Copy + Emails →',exs:['local bakery selling custom cakes in Katy','web design agency for small businesses','auto detailing service in Houston']},
+  security:{ph:'Paste code to review for OWASP vulnerabilities…',btn:'Audit Code →',exs:['Python login endpoint']},
+  tdd:{ph:'Describe a coding problem — I will write the failing tests first, then the code…',btn:'Write Tests First →',exs:['a function that checks if a string is a valid email','a pricing calculator with quantity discounts']},
+  analyze:{ph:'Paste a dataset — one value per line…',btn:'Analyze Data →',exs:['12 15 14 18 16 22 19 21 17 20']},
+  memory:{special:true}
+};
+let curSkill='design';
+const SK_EMOJI={design:'🎨',humanize:'✍️',seo:'🔍',marketing:'📈',security:'🛡️',tdd:'🧪',analyze:'📊',memory:'🧠'};
+function openSkill(s,el){
+  curSkill=s;
+  document.querySelectorAll('.sk-tab').forEach(b=>b.classList.toggle('active',b.textContent.includes(SK_EMOJI[s])));
+  const body=document.getElementById('sk-body');if(!body)return;
+  if(s==='memory'){renderMemory();return;}
+  const t=SK_TOOLS[s];
+  body.innerHTML=`
+    <div class="math-box">
+      <textarea id="sk-in" placeholder="${t.ph}" rows="4" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();runSkill()}"></textarea>
+      <div class="math-foot">
+        <div class="math-exs">${t.exs.map(e=>`<span class="math-ex" onclick="fillSkill('${esc(e)}')">${esc(e.length>34?e.slice(0,34)+'…':e)}</span>`).join('')}</div>
+        <button class="math-btn" id="sk-btn" onclick="runSkill()">${t.btn}</button>
+      </div>
+    </div>
+    <div id="sk-out"></div>`;
+}
+function fillSkill(t){const el=document.getElementById('sk-in');if(el){el.value=t;ar(el);}}
+function showOut(html){const o=document.getElementById('sk-out');if(o)o.innerHTML=html;}
+async function runSkill(){
+  const btn=document.getElementById('sk-btn'),inp=document.getElementById('sk-in');
+  if(!btn||!inp)return;
+  const text=inp.value.trim();if(!text)return;
+  const url=getUrl();
+  if(!url){showOut('<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first, Sir.</div>');return;}
+  btn.disabled=true;btn.textContent='Working…';showOut('<div style="padding:14px;color:var(--text3)">Thinking, Sir…</div>');
+  try{
+    const r=await fetch(url+'/api/skills/'+curSkill,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+    const d=await r.json();
+    if(d.result){showOut((d.stats?'<pre class="sk-stats">'+esc(d.stats)+'</pre>':'')+mdparse(d.result));}
+    else showOut('<div style="padding:14px;color:var(--text3)">⚠️ '+esc(d.error||'No result, Sir.')+'</div>');
+  }catch(e){showOut('<div style="padding:14px;color:var(--text3)">⚠️ Could not reach the backend, Sir.</div>');}
+  btn.disabled=false;btn.textContent=SK_TOOLS[curSkill].btn;
+}
+async function renderMemory(){
+  const body=document.getElementById('sk-body');const url=getUrl();
+  if(!body)return;
+  if(!url){body.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first, Sir.</div>';return;}
+  body.innerHTML=`<div class="math-box">
+      <textarea id="mem-in" placeholder="A fact worth remembering — e.g. My main client is a roofing company in Katy" rows="2" onkeydown="if(event.key==='Enter'){event.preventDefault();memAdd()}"></textarea>
+      <div class="math-foot"><div class="math-exs" style="font-size:11.5px;color:var(--text3);padding:6px 0">Jarvis applies these in every chat. You can also just say "remember that ..." in chat.</div>
+      <button class="math-btn" onclick="memAdd()">Remember</button></div>
+    </div>
+    <div id="mem-list"></div>`;
+  try{
+    const r=await fetch(url+'/api/memory');const d=await r.json();
+    const list=d.memories||[];
+    const box=document.getElementById('mem-list');
+    if(!box)return;
+    if(!list.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">No memories yet, Sir. Tell Jarvis "remember that ..." or add one above.</div>';return;}
+    box.innerHTML=list.map(m=>`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:10px 14px;margin-bottom:8px">
+      <div style="font-size:13px;color:var(--text2)">${esc(m.fact)}</div>
+      <button style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px" title="Forget" onclick="memDel('${m.id}')">&#10005;</button></div>`).join('');
+  }catch(e){}
+}
+async function memAdd(){
+  const inp=document.getElementById('mem-in');const url=getUrl();
+  const fact=(inp?inp.value:'').trim();if(!fact||!url)return;
+  await fetch(url+'/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fact})}).catch(()=>{});
+  renderMemory();
+}
+async function memDel(id){
+  const url=getUrl();if(!url)return;
+  await fetch(url+'/api/memory',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}).catch(()=>{});
+  renderMemory();
 }
 
 // ─── CANVAS ───────────────────────────────────

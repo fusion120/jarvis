@@ -34,6 +34,21 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 
 Jarvis can see and drive **all** your open tabs, not just the active one: `list_tabs`, `read_tab`/`switch_tab`/`close_tab` (by URL, title, or tab number), `go_back`/`go_forward`, `new_window`, `group_tabs` (auto-group tabs by topic), `save_session`/`restore_session` (save and reopen whole multi-tab sessions by voice), and `save_tab` (save the page you're on into the **Research Log**, shown on the Research page). Try: *"list my tabs"*, *"switch to the tab about X"*, *"group my tabs by project"*, *"save my session"*, or *"save this tab"*.
 
+## Skills (10 pro capabilities)
+
+The **Skills** page bundles 10 pro capabilities (adapted from the *10 Must-Have AI Skills* guide) as one-tap tools, and Jarvis can also do them inline in chat:
+
+- **Design Studio** — generates a full design system (palette, fonts, styles) + a complete single-file landing page from a one-line brief. Distinctive, not "AI-looking".
+- **Humanizer** — removes 24 AI writing fingerprints (inflated symbolism, em-dash overuse, AI vocabulary, rule-of-three, …) and rewrites text to sound human.
+- **SEO** — paste a URL for a **live on-page audit** (title, meta description, headings, alt text, schema, word count) or describe a topic for a full SEO + GEO/AEO action plan.
+- **Marketing** — homepage copy (headline → CTA) + a 5-email welcome/nurture sequence + a CRO test, for any business.
+- **Security** — OWASP Top 10 (2025) code review of pasted code with severities and fixes.
+- **TDD** — strict Red-Green-Refactor: failing tests first, then the implementation, then refactor notes.
+- **Data Analysis** — paste a dataset; get instant statistics (mean, median, std dev, trend, outliers) plus an interpretation.
+- **Memory** — persistent memory: say *"remember that …"* in chat or add facts on the Memory tab; Jarvis injects them into every reply.
+
+Voice: *"design a landing page for a roofing company"*, *"humanize this"*, *"SEO audit example.com"*, *"write an email sequence for a bakery"*, *"review this code for security"*, *"write tests first for a function"*, *"analyze this data"*, *"remember that my client is …"*.
+
 ## Smarter + more human
 
 - **Web-grounded answers** — for current-events/factual questions, Jarvis pulls fresh Google News + DuckDuckGo context before answering, with source links. No model change needed (still free `llama-3.3-70b-versatile`; swap via `GROQ_MODEL`).

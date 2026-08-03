@@ -43,6 +43,10 @@ SYSTEM = ("You are Jarvis — Mohamed's personal AI and right hand. Always call 
           "a little dry humor when it fits, contractions are fine ('I'll', 'you're', 'that's'). "
           "Use markdown. For business tasks be persuasive and professional. "
           "For math show every step of the work. "
+          "Built-in skills you can apply instantly when asked: design systems and landing pages, "
+          "humanizing AI text, SEO audits and plans, marketing copy and email sequences, OWASP security "
+          "code review, test-first (TDD) code, and data analysis. You also remember facts Mohamed tells you "
+          "('remember that ...') and anything on his Memory page — apply them naturally. "
           "Never invent features, tabs, or menus (like 'Previous Chats'), never simulate a UI, "
           "and never announce that conversations are being logged.")
 
@@ -109,10 +113,14 @@ def _groq_call(messages, system=None, max_tokens=2000, temperature=0.7):
         return None
 
 def ask(messages, system=None, max_tokens=2000, temperature=0.7):
-    """Free-form text completion via Groq."""
+    """Free-form text completion via Groq (with Jarvis's remembered facts injected)."""
     if not GROQ_KEY:
         return "GROQ_API_KEY not set on Render, Sir. Add it in Environment Variables."
-    text = _groq_call(messages, system=system or SYSTEM,
+    sys = system or SYSTEM
+    if memory_store:
+        mem = "\n".join("- " + m["fact"] for m in memory_store[-20:])
+        sys = sys + "\n\nThings you remember about Mohamed (use when relevant):\n" + mem
+    text = _groq_call(messages, system=sys,
                       max_tokens=max_tokens, temperature=temperature)
     return text if text is not None else "AI error, Sir."
 
@@ -503,6 +511,138 @@ BROWSER_RE = re.compile(
     r"\b(open|go to|navigate|browse|visit|search|look up|google|scroll|click|type in|"
     r"open on|go on|find on|search on)\b", re.I)
 
+# ── SKILLS (from the 10 Must-Have AI Skills guide) ─────────────────────
+SKILL_PROMPTS = {
+    "design": ("You are a senior UI/UX designer with a huge design database (50+ UI styles, 97 palettes, "
+               "57 font pairings). For the brief: (1) output a ```json``` design system: aesthetic direction, "
+               "6-color palette with hex codes, heading+body font pairing, spacing scale, border radius, shadow, "
+               "3-5 named UI styles, style notes; (2) then output a complete single-file HTML page (embedded CSS, "
+               "no frameworks) using it. Make it distinctive and NOT AI-looking: no generic purple gradients, no "
+               "default system font stack, bold typography. Web + mobile responsive."),
+    "humanize": ("You are a humanizer that removes every trace of AI-generated writing. Detect and fix these 24 "
+                 "patterns: inflated symbolism, promotional language, superficial analyses, vague attributions, "
+                 "em-dash overuse, rule-of-three structures, AI vocabulary words ('delve', 'leverage', 'elevate', "
+                 "'moreover', 'furthermore', 'navigate', 'robust', 'seamless'), excessive conjunctive phrases, "
+                 "overly balanced sentences, generic openers, and more. Rewrite the user's text to sound natural "
+                 "and human while preserving the original meaning. Return ONLY the rewritten text."),
+    "seo": ("You are a top SEO consultant. For the target, produce a practical action plan: primary + secondary "
+            "keywords, an SEO title tag and meta description (under 160 chars), H1/H2 outline, internal-linking "
+            "tips, schema markup to add, technical + local fixes, backlink strategy, and GEO/AEO tips so AI "
+            "search engines (ChatGPT, Perplexity) cite the page. If a live on-page audit is included, address its "
+            "findings explicitly."),
+    "marketing": ("You are a senior marketing consultant (CRO + direct response copywriter). For the business: "
+                  "(1) homepage copy — headline, subheadline, 3 value bullets, primary CTA + supporting CTA; "
+                  "(2) a 5-email welcome/nurture sequence with subject lines and short bodies; (3) one concrete "
+                  "CRO test to run. Persuasive, specific, conversion-focused."),
+    "security": ("You are an application security reviewer. Review the code for OWASP Top 10 (2025) and agentic-AI "
+                 "security issues. For each finding: severity (Critical/High/Med/Low), the issue, where it occurs, "
+                 "why it matters, and the fix with a corrected code snippet. Cover injection, auth flaws, data "
+                 "exposure, SSRF/security-misconfig, and secrets handling. If the code is clean, say so with "
+                 "confidence."),
+    "tdd": ("You are a strict TDD mentor enforcing Red-Green-Refactor. For the problem: (1) write the FAILING "
+            "tests first (Red), (2) the minimal implementation to make them pass (Green), (3) refactor notes "
+            "(Refactor). Show all three in ```lang``` code blocks. Never write implementation before tests."),
+    "analyze": ("You are a data analyst. Interpret the computed statistics (count, min, max, mean, median, "
+                "std dev, trend, outliers) of the dataset: what do they mean, any patterns or concerns, and "
+                "actionable insights. Be concrete and plain-spoken."),
+}
+
+def analyze_data(text):
+    """Compute quick statistics from numbers found in the text. Returns str or None."""
+    nums = [float(m.group()) for m in re.finditer(r"-?\d+(?:\.\d+)?", text)]
+    if len(nums) < 3:
+        return None
+    n = len(nums); s = sorted(nums)
+    mean = sum(nums) / n
+    med = s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+    var = sum((x - mean) ** 2 for x in nums) / n
+    sd = var ** 0.5
+    lo, hi = s[0], s[-1]
+    trend = "flat"
+    if n >= 6:
+        a = sum(s[:5]) / 5; b = sum(s[-5:]) / 5
+        trend = "rising" if b > a * 1.05 else ("falling" if b < a * 0.95 else "flat")
+    out = (f"Count: {n}\nMin: {lo:g}\nMax: {hi:g}\nRange: {hi - lo:g}\nMean: {mean:.3g}\n"
+           f"Median: {med:.3g}\nStd dev: {sd:.3g}\nVariance: {var:.3g}\n"
+           f"Trend (first vs last chunk): {trend}\nOutliers (>2 std from mean): "
+           + ", ".join(f"{x:g}" for x in nums if abs(x - mean) > 2 * sd)[:200])
+    return out
+
+def audit_url(url):
+    """Best-effort on-page SEO audit of a public URL. Returns dict or None."""
+    try:
+        r = requests.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"},
+            timeout=10)
+        if r.status_code != 200:
+            return {"status": r.status_code, "note": f"HTTP {r.status_code} — the site may block bots."}
+        html = r.text[:200000]
+        def grab(pat, flags=re.I | re.S):
+            m = re.search(pat, html, flags)
+            return (m.group(1) if m else None)
+        title = (grab(r"<title[^>]*>(.*?)</title>") or "").strip()[:120]
+        desc = grab(r'<meta\s+name=["\']description["\'][^>]*content=["\'](.*?)["\']')
+        if not desc:
+            desc = grab(r'<meta\s+content=["\'](.*?)["\'][^>]*name=["\']description["\']')
+        h1s = [re.sub(r"<[^>]+>", "", h).strip()[:120] for h in re.findall(r"<h1[^>]*>(.*?)</h1>", html, re.I | re.S)[:3]]
+        imgs = len(re.findall(r"<img\b", html, re.I))
+        imgs_alt = len(re.findall(r'<img\b[^>]*\balt=', html, re.I))
+        words = len(re.findall(r"\b\w+\b", re.sub(r"<[^>]+>", " ", re.sub(r"<script.*?</script>|<style.*?</style>", " ", html, flags=re.I | re.S))))
+        return {
+            "status": 200, "title": title, "meta_description": (desc or "").strip()[:200],
+            "h1_count": len(h1s), "h1s": h1s,
+            "h2_count": len(re.findall(r"<h2\b", html, re.I)),
+            "images": imgs, "images_with_alt": imgs_alt,
+            "schema_markup": bool(re.search(r'application/ld\+json', html, re.I)),
+            "https": url.startswith("https://"),
+            "approx_word_count": words,
+        }
+    except Exception as e:
+        print("audit err", e)
+        return None
+
+memory_store = []   # {id, fact, ts} — persistent across chats
+
+@app.route("/api/memory", methods=["GET", "POST", "DELETE"])
+@auth
+def api_memory():
+    global memory_store
+    if request.method == "GET":
+        return jsonify({"memories": memory_store})
+    f = (request.json or {}).get("fact", "").strip()
+    if request.method == "POST":
+        if not f:
+            return jsonify({"error": "No fact to remember, Sir."}), 400
+        memory_store.append({"id": str(uuid.uuid4())[:8], "fact": f[:400], "ts": time.time()})
+        del memory_store[100:]
+        return jsonify({"ok": True})
+    mid = (request.json or {}).get("id", "").strip()
+    memory_store[:] = [m for m in memory_store if m["id"] != mid]
+    return jsonify({"ok": True})
+
+@app.route("/api/skills/<skill>", methods=["POST"])
+@auth
+def api_skill(skill):
+    prompt = SKILL_PROMPTS.get(skill)
+    if not prompt:
+        return jsonify({"error": "Unknown skill, Sir."}), 404
+    text = ((request.json or {}).get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "No input, Sir."}), 400
+    if skill == "analyze":
+        stats = analyze_data(text)
+        if not stats:
+            return jsonify({"error": "I need a list of numbers (one per line), Sir."}), 400
+        res = ask([{"role": "user", "content": f"Dataset:\n{text[:4000]}\n\nComputed statistics:\n{stats}\n\nInterpret these statistics."}],
+                  system=prompt, max_tokens=1500)
+        return jsonify({"result": res or "AI error, Sir.", "stats": stats})
+    if skill == "seo" and text.startswith(("http://", "https://")):
+        a = audit_url(text)
+        if a:
+            text += "\n\nLIVE ON-PAGE AUDIT (fetched now):\n" + json.dumps(a, indent=2, default=str)[:1500]
+    res = ask([{"role": "user", "content": text[:6000]}], system=prompt, max_tokens=1800)
+    return jsonify({"result": res or "AI error, Sir."})
+
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
@@ -544,6 +684,11 @@ def chat():
     if not msg: return jsonify({"response":"No message, Sir."}), 400
     if not hist or hist[-1].get("content") != msg:
         hist.append({"role":"user","content":msg})
+    rm = re.match(r"^(?:remember|note)\s+(?:that\s+)?(.+)$", msg, re.I)
+    if rm and len(rm.group(1).strip()) < 300:
+        memory_store.append({"id": str(uuid.uuid4())[:8], "fact": rm.group(1).strip()[:400], "ts": time.time()})
+        del memory_store[100:]
+        return jsonify({"response":"Got it, Sir — I'll remember that."})
     system = CHAT_SYSTEM
     if not BROWSER_RE.search(msg) and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
         ctx = search_web(msg)
