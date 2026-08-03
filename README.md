@@ -34,6 +34,12 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 
 Jarvis can see and drive **all** your open tabs, not just the active one: `list_tabs`, `read_tab`/`switch_tab`/`close_tab` (by URL, title, or tab number), `go_back`/`go_forward`, `new_window`, `group_tabs` (auto-group tabs by topic), `save_session`/`restore_session` (save and reopen whole multi-tab sessions by voice), and `save_tab` (save the page you're on into the **Research Log**, shown on the Research page). Try: *"list my tabs"*, *"switch to the tab about X"*, *"group my tabs by project"*, *"save my session"*, or *"save this tab"*.
 
+## Bulk scraping
+
+The **Research page** has a bulk collector: paste up to 25 URLs (one per line) and Jarvis pulls each page's title, meta description, and main text into your **Research Log** — handy for competitive research, client-site audits, or archiving. Or just say **"scrape my open tabs"** to collect every tab you have open in Chrome at once.
+
+It's built politely on purpose: ~5 pages max per site per run, a 0.5s pause between requests, 10s timeouts, and failed pages are skipped and reported — no login-walled content, no anti-bot evasion.
+
 ## Skills (10 pro capabilities)
 
 The **Skills** page bundles 10 pro capabilities (adapted from the *10 Must-Have AI Skills* guide) as one-tap tools, and Jarvis can also do them inline in chat:

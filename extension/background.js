@@ -326,6 +326,18 @@ async function execStep(step) {
         return { ok: !!post, done: post ? `saved "${r.title}" to research log` : 'backend unreachable — could not save' };
       }
 
+      case 'collect_tabs': {
+        const tabs = (await chrome.tabs.query({})).filter(t => t.url && t.url.startsWith('http'));
+        const urls = tabs.map(t => t.url);
+        const r = await fetch(`${BACKEND}/api/bulk-scrape`, {
+          method: 'POST', headers: headers(),
+          body: JSON.stringify({ urls, label: step.label || 'tabs' })
+        }).catch(() => null);
+        if (!r) return { ok: false, error: 'backend unreachable' };
+        const d = await r.json().catch(() => ({}));
+        return { ok: true, done: `scraped ${d.saved || 0} of ${urls.length} open tabs into the research log` };
+      }
+
       default:
         return { ok: false, error: `Unknown action: ${step.action}` };
     }

@@ -688,6 +688,14 @@ body::before{
           </div>
         </div>
         <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div></div>
+        <div class="math-box" style="margin:18px 0 0">
+          <textarea id="scrape-in" placeholder="Bulk collector — paste up to 25 URLs (one per line), Jarvis pulls each page into your Research Log…" rows="3" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();runScrape()}"></textarea>
+          <div class="math-foot">
+            <div class="math-exs" style="font-size:11.5px;color:var(--text3);padding:6px 0">Polite scraper: ~5 pages per site, rate-limited. Say "scrape my open tabs" to grab every tab.</div>
+            <button class="math-btn" id="scrape-btn" onclick="runScrape()">Scrape URLs &#8594;</button>
+          </div>
+        </div>
+        <div id="scrape-out"></div>
         <div class="p-sub" style="margin:26px 0 6px">Research Log <span style="font-weight:400;color:var(--text3)">· say "save this tab" to grab the page you're on</span></div>
         <div id="rlog-list" style="display:flex;flex-direction:column;gap:10px;margin-top:8px"></div>
       </div></div>
@@ -1354,6 +1362,24 @@ async function renderResearchLog(){
         <div style="font-size:12.5px;color:var(--text2)">${esc((x.text||'').slice(0,220))}</div>
       </div>`).join('');
   }catch(e){box.innerHTML='';}
+}
+
+async function runScrape(){
+  const inp=document.getElementById('scrape-in');if(!inp)return;
+  const out=document.getElementById('scrape-out');
+  const urls=inp.value.split('\n').map(s=>s.trim()).filter(Boolean);
+  if(!urls.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste some URLs first, Sir.</div>';return;}
+  const url=getUrl();if(!url)return;
+  const btn=document.getElementById('scrape-btn');
+  if(btn){btn.disabled=true;btn.textContent='Scraping…';}
+  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">Scraping '+urls.length+' pages…</div>';
+  try{
+    const r=await fetch(url+'/api/bulk-scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls})});
+    const d=await r.json();
+    if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Saved <b>'+d.saved+'</b> page(s) to the Research Log, skipped <b>'+d.skipped+'</b> (per-site cap), failed <b>'+d.failed+'</b>.'+(d.failed_items&&d.failed_items.length?('<div style="margin-top:6px;color:var(--text3);font-size:11.5px">'+d.failed_items.map(f=>esc(f[0])+' — '+esc(f[1])).join('<br>')+'</div>'):'')+'</div>';
+    renderResearchLog();
+  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Could not reach the backend, Sir.</div>';}
+  if(btn){btn.disabled=false;btn.textContent='Scrape URLs →';}
 }
 
 // ─── SCHEDULED REMINDERS (Telegram) ──────────

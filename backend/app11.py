@@ -349,7 +349,7 @@ KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
                  "search","run_js","scroll","wait","press_key",
                  "list_tabs","read_tab","switch_tab","close_tab",
                  "go_back","go_forward","new_window","group_tabs",
-                 "save_session","restore_session","save_tab"}
+                 "save_session","restore_session","save_tab","collect_tabs"}
 STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key","query","tab","keyword","name"}
 BROWSER_MAX_STEPS = 8
 BROWSER_MAX_ITERS = 12          # guard against infinite agentic loops
@@ -391,7 +391,8 @@ Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"group_tabs","keyword":"topic"} — group tabs matching the topic
 - {"action":"save_session"} — save all open tabs for later
 - {"action":"restore_session"} — reopen the last saved session
-- {"action":"save_tab","label":"note"} — save the current tab's text to the research log"""
+- {"action":"save_tab","label":"note"} — save the current tab's text to the research log
+- {"action":"collect_tabs","label":"note"} — scrape ALL open tabs into the research log (polite bulk collector)"""
 
 def ask_json(system, user):
     """Ask Groq for a JSON object (strip markdown fences if any)."""
@@ -509,7 +510,7 @@ def enqueue_browser(command, steps, chain=None):
 # dispatch when the user's message is clearly a browser action.
 BROWSER_RE = re.compile(
     r"\b(open|go to|navigate|browse|visit|search|look up|google|scroll|click|type in|"
-    r"open on|go on|find on|search on)\b", re.I)
+    r"open on|go on|find on|search on|scrape|collect)\b", re.I)
 
 # ── SKILLS (from the 10 Must-Have AI Skills guide) ─────────────────────
 SKILL_PROMPTS = {
@@ -962,6 +963,60 @@ def api_research_log():
         del research_log[200:]
         return jsonify({"ok": True})
     return jsonify({"log": research_log})
+
+def extract_page(url):
+    """Fetch a page and pull out title, meta description, and main text. Returns (content, err)."""
+    try:
+        r = requests.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"},
+            timeout=10, allow_redirects=True)
+        if r.status_code != 200:
+            return None, f"HTTP {r.status_code}"
+        html = r.text[:250000]
+        def grab(pat, flags=re.I | re.S):
+            m = re.search(pat, html, flags)
+            return (m.group(1) if m else None)
+        title = (grab(r"<title[^>]*>(.*?)</title>") or "").strip()[:200]
+        desc = grab(r'<meta\s+name=["\']description["\'][^>]*content=["\'](.*?)["\']')
+        if not desc:
+            desc = grab(r'<meta\s+content=["\'](.*?)["\'][^>]*name=["\']description["\']')
+        body = re.sub(r"<script.*?</script>|<style.*?</style>|<noscript.*?</noscript>", " ", html, flags=re.I | re.S)
+        body = re.sub(r"<[^>]+>", " ", body)
+        body = re.sub(r"\s+", " ", body).strip()[:5500]
+        text = (("Title: " + title + "\n") if title else "") + \
+               (("Description: " + desc.strip()[:200] + "\n") if desc and desc.strip() else "") + body
+        return (title or url, text[:6000]), None
+    except Exception as e:
+        return None, str(e)[:120]
+
+@app.route("/api/bulk-scrape", methods=["POST"])
+@auth
+def api_bulk_scrape():
+    """Politely scrape a list of URLs into the research log (capped + rate-limited)."""
+    global research_log
+    d = request.json or {}
+    urls = [u.strip() for u in (d.get("urls") or []) if isinstance(u, str) and u.startswith(("http://", "https://"))][:25]
+    label = (d.get("label") or "bulk")[:60]
+    if not urls:
+        return jsonify({"error": "Give me some http(s) URLs, Sir."}), 400
+    per_host, accepted, skipped, failed = {}, [], [], []
+    for u in urls:
+        host = re.sub(r"^https?://", "", u).split("/")[0].lower()
+        if per_host.get(host, 0) >= 5:      # polite: max 5 pages per site per batch
+            skipped.append(u); continue
+        per_host[host] = per_host.get(host, 0) + 1
+        content, err = extract_page(u)
+        if content:
+            title, text = content
+            research_log.insert(0, {"id": str(uuid.uuid4())[:8], "title": title[:200], "url": u[:500],
+                                    "text": text[:3000], "label": label, "ts": time.time()})
+            accepted.append(u)
+        else:
+            failed.append((u, err or "failed"))
+        del research_log[200:]
+        time.sleep(0.5)                      # rate-limited between fetches
+    return jsonify({"ok": True, "saved": len(accepted), "skipped": len(skipped),
+                    "failed": len(failed), "failed_items": failed[:10]})
 
 @app.route("/webhook/telegram", methods=["POST"])
 def tg_webhook():
