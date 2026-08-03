@@ -1,6 +1,6 @@
 """
 JARVIS BACKEND v3.0
-- AI: Grok (xAI) — grok-4.5
+- AI: Groq (free) — llama-3.3-70b-versatile
 - Security: API_SECRET token + CORS whitelist
 - Canvas: 2hr timer + Telegram approval flow
 - Outlook: Background polling every 10 min → Telegram summary + draft approval
@@ -21,8 +21,8 @@ CORS(app, origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else "*",
      allow_headers=["Content-Type", "X-Jarvis-Token"])
 
 # ── CONFIG (all from Render env vars — never hardcode) ────────────────
-GROK_KEY       = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY", "")
-GROK_MODEL     = os.getenv("GROK_MODEL", "grok-4.5")  # or grok-4.3 / grok-4.20-0309-reasoning
+GROQ_KEY       = os.getenv("GROQ_API_KEY", "")
+GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # free on console.groq.com
 API_SECRET     = os.getenv("API_SECRET", "")       # random string you set on Render
 TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -69,10 +69,10 @@ def auth(f):
         return f(*args, **kwargs)
     return decorated
 
-# ── GROK AI (xAI OpenAI-compatible API) ───────────────────────────────
-def _grok_call(messages, system=None, max_tokens=2000, temperature=0.7):
-    """One call to the xAI chat completions API. Returns response text, or None."""
-    if not GROK_KEY:
+# ── GROQ AI (OpenAI-compatible API, free tier) ────────────────────────
+def _groq_call(messages, system=None, max_tokens=2000, temperature=0.7):
+    """One call to the Groq chat completions API. Returns response text, or None."""
+    if not GROQ_KEY:
         return None
     msgs = []
     for m in messages or []:
@@ -87,25 +87,31 @@ def _grok_call(messages, system=None, max_tokens=2000, temperature=0.7):
         msgs.pop(0)
     if not msgs:
         return None
-    headers = {"Authorization": f"Bearer {GROK_KEY}", "Content-Type": "application/json"}
-    body = {"model": GROK_MODEL, "max_completion_tokens": max_tokens,
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    body = {"model": GROQ_MODEL, "max_tokens": max_tokens,
             "temperature": temperature,
             "messages": [{"role": "system", "content": system or SYSTEM}] + msgs}
     try:
-        r = requests.post("https://api.x.ai/v1/chat/completions",
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
                           headers=headers, json=body, timeout=60)
         r.raise_for_status()
         data = r.json()
         return data["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"Grok API error: {e}")
+        detail = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                detail = " | " + e.response.text[:500]
+            except Exception:
+                pass
+        print(f"Groq API error: {e}{detail}")
         return None
 
 def ask(messages, system=None, max_tokens=2000, temperature=0.7):
-    """Free-form text completion via Grok."""
-    if not GROK_KEY:
-        return "GROK_API_KEY not set on Render, Sir. Add it in Environment Variables."
-    text = _grok_call(messages, system=system or SYSTEM,
+    """Free-form text completion via Groq."""
+    if not GROQ_KEY:
+        return "GROQ_API_KEY not set on Render, Sir. Add it in Environment Variables."
+    text = _groq_call(messages, system=system or SYSTEM,
                       max_tokens=max_tokens, temperature=temperature)
     return text if text is not None else "AI error, Sir."
 
@@ -359,13 +365,14 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"wait","ms":1000}
 - {"action":"press_key","key":"Enter"}
 - {"action":"run_js","code":"return document.title"}
-To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating."""
+To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
+When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests."""
 
 def ask_json(system, user):
-    """Ask Grok for a JSON object (strip markdown fences if any)."""
-    if not GROK_KEY:
+    """Ask Groq for a JSON object (strip markdown fences if any)."""
+    if not GROQ_KEY:
         return None
-    text = _grok_call([{"role": "user", "content": user}], system=system,
+    text = _groq_call([{"role": "user", "content": user}], system=system,
                       max_tokens=2000, temperature=0.2)
     if not text:
         return None
@@ -376,13 +383,55 @@ def ask_json(system, user):
     except Exception:
         return None
 
+SITE_ALIASES = {
+    "yt": "youtube.com", "youtube": "youtube.com",
+    "google": "google.com", "gmail": "mail.google.com",
+    "maps": "maps.google.com", "drive": "drive.google.com",
+    "docs": "docs.google.com", "gpt": "chatgpt.com", "chatgpt": "chatgpt.com",
+    "x": "x.com", "twitter": "x.com", "netflix": "netflix.com",
+    "spotify": "open.spotify.com", "instagram": "instagram.com",
+    "reddit": "reddit.com", "github": "github.com",
+    "wikipedia": "wikipedia.org", "amazon": "amazon.com",
+    "outlook": "outlook.com", "yahoo": "mail.yahoo.com",
+}
+
+def _normalize_url(u):
+    """Turn 'yt', 'youtube', 'youtube.com' into a full https URL."""
+    u = (u or "").strip()
+    if not u:
+        return u
+    if u.lower().startswith(("http://", "https://")):
+        return u
+    low = u.lower().split("/")[0].split("?")[0].split("#")[0]
+    if low in SITE_ALIASES:
+        return "https://" + SITE_ALIASES[low]
+    return "https://" + u
+
 def sanitize_steps(steps):
     out = []
     for s in (steps or []):
         if not isinstance(s, dict) or s.get("action") not in KNOWN_ACTIONS:
             continue
-        out.append({k: v for k, v in s.items() if k in STEP_FIELDS and v is not None})
+        s2 = {k: v for k, v in s.items() if k in STEP_FIELDS and v is not None}
+        if s2.get("action") in ("navigate", "new_tab"):
+            s2["url"] = _normalize_url(s2.get("url"))
+        out.append(s2)
         if len(out) >= BROWSER_MAX_STEPS:
+            break
+    return out
+
+OPEN_RE = re.compile(r"^\s*open\b", re.I)
+
+def prefer_new_tab(command, steps):
+    """For 'open <site>' commands, make the first navigation open a NEW TAB."""
+    if not steps or not OPEN_RE.match(command or ""):
+        return steps
+    out = list(steps)
+    for i, s in enumerate(out):
+        if s.get("action") == "navigate":
+            s = dict(s)
+            s["action"] = "new_tab"
+            out[i] = s
             break
     return out
 
@@ -392,7 +441,7 @@ def plan_steps(command):
                    f"Task: {command}\nCurrent tab: {browser_tab_state.get('url','')} ({browser_tab_state.get('title','')})")
     if not obj:
         return []
-    return sanitize_steps(obj.get("steps"))
+    return prefer_new_tab(command, sanitize_steps(obj.get("steps")))
 
 def decide_next(command, log, page):
     """Decide if the goal is done; otherwise produce the next batch of steps.
@@ -440,7 +489,7 @@ BROWSER_RE = re.compile(
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
-    return jsonify({"status":"online","model":GROK_MODEL,"message":"Jarvis online, Sir."})
+    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir."})
 
 @app.route("/api/chat", methods=["POST"])
 @auth

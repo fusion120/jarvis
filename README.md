@@ -11,13 +11,13 @@ Personal AI assistant for Mohamed. Flask backend (Render) + static website (Netl
 ## Setup
 
 1. **Render** — New Web Service → connect repo → root directory `backend` → build command `pip install -r requirements.txt` → start command `gunicorn app11:app`
-2. **Environment variables (Render):** `GROK_API_KEY` (required — from console.x.ai). Optional: `GROK_MODEL` (default `grok-4.5`; set `grok-4.3` for a cheaper/faster option), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `CANVAS_TOKEN`, `CANVAS_DOMAIN`, `OUTLOOK_EMAIL`, `OUTLOOK_PASSWORD`, `DIGEST_TIME` (HH:MM, default `12:00` UTC), `DIGEST_TZ` (offset, e.g. `-05:00` for Houston)
+2. **Environment variables (Render):** `GROQ_API_KEY` (required — from console.groq.com, free). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `CANVAS_TOKEN`, `CANVAS_DOMAIN`, `OUTLOOK_EMAIL`, `OUTLOOK_PASSWORD`, `DIGEST_TIME` (HH:MM, default `12:00` UTC), `DIGEST_TZ` (offset, e.g. `-05:00` for Houston)
 3. **Netlify** — import the repo; `netlify.toml` already sets the base to `frontend`
 4. **Chrome** — `chrome://extensions` → Developer mode → Load unpacked → select `extension/` → set the backend URL in the popup
 
 ## Browser control
 
-Ask in chat (e.g. *"open Gmail, summarize the newest messages and draft replies"*) — Jarvis plans the browser steps, the extension executes them, and the result appears on the Browser page and Telegram. Each command runs exactly once (the backend hands each task to the extension a single time).
+Ask in chat (e.g. *"open Gmail, summarize the newest messages and draft replies"*) — Jarvis plans the browser steps, the extension executes them, and the result appears on the Browser page and Telegram. Each command runs exactly once (the backend hands each task to the extension a single time). **"Open <site>" commands open in a new tab** (e.g. *"open yt"* → YouTube in a new tab), with common short names like `yt`, `gmail`, `maps` mapped automatically.
 
 ## Voice control (wake word)
 
