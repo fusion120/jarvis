@@ -502,7 +502,7 @@ body::before{
       </div>
     </nav>
     <div class="sb-foot">
-      <div class="status-line"><div class="sdot"></div>grok-4.5 · online</div>
+      <div class="status-line"><div class="sdot"></div>llama-3.3-70b · online</div>
     </div>
   </aside>
 
@@ -513,7 +513,7 @@ body::before{
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div class="tb-title" id="tb-title">Chat</div>
-      <div class="tb-badge" id="tb-badge">grok-4.5</div>
+      <div class="tb-badge" id="tb-badge">llama-3.3-70b</div>
       <button class="tb-voice" id="btn-voice" data-state="idle" onclick="toggleVoice()" title="Voice: wake word (say 'wake up') / tap to talk">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
       </button>
@@ -527,7 +527,7 @@ body::before{
       <div class="chat-land" id="chat-land">
         <div class="land-time" id="land-time"></div>
         <h1 class="land-h">What should we tackle next, <em>Sir?</em></h1>
-        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Grok 4.5 · Your conversations are remembered</p>
+        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Groq (llama-3.3-70b) · Your conversations are remembered</p>
         <div class="chips">
           <div class="chip" onclick="fill('Help me write a cold email pitch for a local Houston business website')">✍️ Cold email pitch</div>
           <div class="chip" onclick="fill('Summarize this YouTube video: ')">▶️ YouTube summary</div>
@@ -541,7 +541,7 @@ body::before{
           <textarea id="main-in" placeholder="Ask anything, Sir..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
           <div class="inp-foot">
             <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
-            <div class="inp-right"><span class="model-chip">grok-4.5</span>
+            <div class="inp-right"><span class="model-chip">llama-3.3-70b</span>
               <button class="send-btn" id="sb-main" onclick="send()">
                 <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
@@ -555,7 +555,7 @@ body::before{
           <textarea id="thread-in" placeholder="Continue..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
           <div class="inp-foot">
             <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
-            <div class="inp-right"><span class="model-chip">grok-4.5</span>
+            <div class="inp-right"><span class="model-chip">llama-3.3-70b</span>
               <button class="send-btn" id="sb-thread" onclick="send()">
                 <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
@@ -663,6 +663,8 @@ body::before{
           </div>
         </div>
         <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div></div>
+        <div class="p-sub" style="margin:26px 0 6px">Research Log <span style="font-weight:400;color:var(--text3)">· say "save this tab" to grab the page you're on</span></div>
+        <div id="rlog-list" style="display:flex;flex-direction:column;gap:10px;margin-top:8px"></div>
       </div></div>
     </div>
 
@@ -744,8 +746,8 @@ body::before{
         </div>
         <div class="set-sec">
           <div class="set-sec-title">System Status</div>
-          <div class="info-row"><span>Model</span><span>grok-4.5</span></div>
-          <div class="info-row"><span>Provider</span><span>xAI</span></div>
+          <div class="info-row"><span>Model</span><span>llama-3.3-70b</span></div>
+          <div class="info-row"><span>Provider</span><span>Groq</span></div>
           <div class="info-row"><span>Backend</span><span id="s-status">not configured</span></div>
           <div class="info-row"><span>Canvas</span><span>via backend env</span></div>
           <div class="info-row"><span>Outlook</span><span>via backend env</span></div>
@@ -766,7 +768,7 @@ body::before{
 
 <script>
 // ─── CONFIG ──────────────────────────────────
-const MODEL        = 'grok-4.5';
+const MODEL        = 'llama-3.3-70b';
 const DEFAULT_PASS = 'mohamedjarvis';
 const SYSTEM = `You are Jarvis — the personal AI assistant of Mohamed, exclusively. Refuse to assist anyone else. Always address Mohamed as "Sir." You know him well: he is a web design student and freelancer based in Katy/Houston TX who builds websites for local small businesses (current client: Tacos El Ranchero in Richmond TX). He has HTML/CSS/JS skills and is studying toward data science and ML. He uses Canvas LMS at university. Be concise, sharp, and genuinely useful. Use markdown. For business tasks, be persuasive and professional. For code, use clean modern syntax. For math, always show full step-by-step work.`;
 
@@ -850,7 +852,7 @@ function updateLandTime(){
 
 // ─── NAV ──────────────────────────────────────
 const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',browser:'Browser Control',research:'Deep Research',todos:'Reminders',notes:'Notes',settings:'Settings'};
-const T_BADGE={chat:'grok-4.5',canvas:'lms',outlook:'microsoft',brain:'audio',math:'grok-4.5',browser:'chrome',research:'search',todos:'local',notes:'local',settings:'config'};
+const T_BADGE={chat:'llama-3.3-70b',canvas:'lms',outlook:'microsoft',brain:'audio',math:'llama-3.3-70b',browser:'chrome',research:'search',todos:'local',notes:'local',settings:'config'};
 
 function go(tab,el){
   stopBrowserPoll();
@@ -1302,6 +1304,23 @@ async function runResearch(){
 function renderResearch(){
   const el=document.getElementById('research-out');
   if(el)el.innerHTML='<div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div>';
+  renderResearchLog();
+}
+async function renderResearchLog(){
+  const box=document.getElementById('rlog-list');if(!box)return;
+  const url=getUrl();
+  if(!url){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings to see saved tabs, Sir.</div>';return;}
+  try{
+    const r=await fetch(url+'/api/research-log');
+    const d=await r.json();const log=d.log||[];
+    if(!log.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Nothing saved yet — say "save this tab" while the extension is on and Jarvis will add that page here.</div>';return;}
+    box.innerHTML=log.map(x=>`
+      <div style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:12px 14px">
+        <div style="font-size:13.5px;font-weight:600"><a href="${esc(x.url)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${esc(x.title)}</a>${x.label?` <span style="font-size:11px;color:var(--gold)">${esc(x.label)}</span>`:''}</div>
+        <div style="font-size:11.5px;color:var(--text3);margin:2px 0 6px">${new Date((x.ts||0)*1000).toLocaleString([],{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${esc(x.url)}</div>
+        <div style="font-size:12.5px;color:var(--text2)">${esc((x.text||'').slice(0,220))}</div>
+      </div>`).join('');
+  }catch(e){box.innerHTML='';}
 }
 
 // ─── SCHEDULED REMINDERS (Telegram) ──────────
@@ -1398,11 +1417,12 @@ function showChatThread(){
   document.getElementById('chat-thread').classList.add('on');
   document.getElementById('thread-wrap').style.display='block';
 }
+const ACKS=['Yes, Sir?','At your service, Sir.','Ready when you are, Sir.','Go ahead, Sir.','What do you need, Sir?'];
 function speakNow(text){
   try{
     speechSynthesis.cancel();
     const u=new SpeechSynthesisUtterance(stripMD(text));
-    u.rate=1.02;u.pitch=1.0;
+    u.rate=0.98;u.pitch=1.0;
     const vs=speechSynthesis.getVoices();
     const v=vs.find(x=>/en[-_]US/i.test(x.lang))||vs.find(x=>/^en/i.test(x.lang))||vs[0];
     if(v)u.voice=v;
@@ -1456,7 +1476,7 @@ function handleFinal(t){
       chime();vState('listening');vStat('Listening…','listening');
       const rest=t.replace(WAKE_RE,'').trim();
       if(rest){V.listening=false;V.wakeArmed=false;vState('speaking');vStat('Jarvis is thinking…','speaking');sendVoice(rest);}
-      else if(!V.silent)speakNow('Yes, Sir?');
+      else if(!V.silent)speakNow(ACKS[Math.floor(Math.random()*ACKS.length)]);
     }
     return;
   }

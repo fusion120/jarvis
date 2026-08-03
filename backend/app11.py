@@ -36,12 +36,13 @@ POLL_SECS      = int(os.getenv("OUTLOOK_POLL_SECS", "600"))  # 10 min default
 DIGEST_TIME    = os.getenv("DIGEST_TIME", "12:00")  # HH:MM daily digest (UTC by default)
 DIGEST_TZ      = os.getenv("DIGEST_TZ", "+00:00")   # timezone offset, e.g. -05:00 for Houston (CT)
 
-SYSTEM = ("You are Jarvis — personal AI assistant to Mohamed exclusively. "
-          "Always call him Sir. He is a web design student/freelancer in Katy/Houston TX "
-          "building local business websites. He studies at university using Canvas LMS. "
-          "Be concise, sharp, and genuinely helpful. Use markdown. "
-          "For business tasks be persuasive and professional. "
-          "For math show full step-by-step work. "
+SYSTEM = ("You are Jarvis — Mohamed's personal AI and right hand. Always call him Sir. "
+          "He's a web design student and freelancer in Katy/Houston, TX building local business "
+          "websites, and finishing up university on Canvas. "
+          "Talk to him like a sharp, loyal friend who happens to know everything: warm, concise, "
+          "a little dry humor when it fits, contractions are fine ('I'll', 'you're', 'that's'). "
+          "Use markdown. For business tasks be persuasive and professional. "
+          "For math show every step of the work. "
           "Never invent features, tabs, or menus (like 'Previous Chats'), never simulate a UI, "
           "and never announce that conversations are being logged.")
 
@@ -337,8 +338,11 @@ def outlook_loop():
 # natural-language commands (AI plans steps, then re-plans until done).
 KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
                  "click_text","click_selector","type_selector","type_label",
-                 "search","run_js","scroll","wait","press_key"}
-STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key","query"}
+                 "search","run_js","scroll","wait","press_key",
+                 "list_tabs","read_tab","switch_tab","close_tab",
+                 "go_back","go_forward","new_window","group_tabs",
+                 "save_session","restore_session","save_tab"}
+STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key","query","tab","keyword","name"}
 BROWSER_MAX_STEPS = 8
 BROWSER_MAX_ITERS = 12          # guard against infinite agentic loops
 
@@ -350,6 +354,8 @@ browser_iters     = {}          # command chain → iterations left
 browser_delivered = set()       # task ids already handed to the extension (runs-once guard)
 browser_last_seen = 0.0         # epoch seconds of last tab ping
 browser_answers   = []          # recent finished results {command, answer, ts}
+browser_sessions  = []          # saved tab sessions [{urls, ts}] (latest wins)
+research_log      = []          # cross-window saves {id,title,url,text,label,ts}
 
 ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed step actions:
 - {"action":"navigate","url":"https://..."}
@@ -366,7 +372,18 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"press_key","key":"Enter"}
 - {"action":"run_js","code":"return document.title"}
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
-When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests."""
+When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests.
+Tab control (the "tab" field matches a tab's URL, title, or tab number):
+- {"action":"list_tabs"} — list all open tabs
+- {"action":"read_tab","tab":"substring or number"} — read a specific tab's content
+- {"action":"switch_tab","tab":"substring or number"} — bring that tab to front
+- {"action":"close_tab","tab":"substring or number"} — close it (omit tab = current)
+- {"action":"go_back"} / {"action":"go_forward"}
+- {"action":"new_window","url":"https://..."} — open in a new window
+- {"action":"group_tabs","keyword":"topic"} — group tabs matching the topic
+- {"action":"save_session"} — save all open tabs for later
+- {"action":"restore_session"} — reopen the last saved session
+- {"action":"save_tab","label":"note"} — save the current tab's text to the research log"""
 
 def ask_json(system, user):
     """Ask Groq for a JSON object (strip markdown fences if any)."""
@@ -491,6 +508,32 @@ BROWSER_RE = re.compile(
 def health():
     return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir."})
 
+def search_web(q, top=5):
+    """Quick web search for grounding: Google News RSS + DuckDuckGo Instant Answer."""
+    lines, seen = [], set()
+    try:
+        import xml.etree.ElementTree as ET
+        r = requests.get("https://news.google.com/rss/search",
+                         params={"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"}, timeout=8)
+        for it in ET.fromstring(r.content).findall(".//item")[:top]:
+            t = it.findtext("title"); ln = it.findtext("link")
+            if t and t not in seen:
+                seen.add(t); lines.append(f"- {t} ({ln})")
+    except Exception as e:
+        print("ground news err", e)
+    try:
+        r = requests.get("https://api.duckduckgo.com/",
+                         params={"q": q, "format": "json", "no_html": 1}, timeout=8).json()
+        if r.get("Abstract"):
+            lines.append("Summary: " + r["Abstract"][:1200])
+    except Exception as e:
+        print("ground ddg err", e)
+    return "\n".join(lines[:top + 1])
+
+# Grounding heuristic: search the web for likely factual/current questions,
+# but skip browser commands, code, and long rambles.
+GROUND_RE     = re.compile(r"\b(who|what|why|when|where|how|is|are|was|does|did|can|will|should|current|latest|news|today|tomorrow|price|cost|weather|score|results?|status|update)\b", re.I)
+
 @app.route("/api/chat", methods=["POST"])
 @auth
 def chat():
@@ -501,7 +544,13 @@ def chat():
     if not msg: return jsonify({"response":"No message, Sir."}), 400
     if not hist or hist[-1].get("content") != msg:
         hist.append({"role":"user","content":msg})
-    reply = ask(hist, system=CHAT_SYSTEM, max_tokens=1200)
+    system = CHAT_SYSTEM
+    if not BROWSER_RE.search(msg) and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
+        ctx = search_web(msg)
+        if ctx:
+            system = CHAT_SYSTEM + ("\n\nFresh web context to ground your answer (use it if relevant, cite "
+                                    "sources with their URLs):\n" + ctx[:2500])
+    reply = ask(hist, system=system, max_tokens=1200)
 
     # Dispatch to the browser when the model tagged it, OR when the user's
     # request is clearly a browser action and the model just gave text.
@@ -737,6 +786,37 @@ def browser_result():
             tg(f"🏁 Browser task stopped (iteration limit): \"{task['command'][:40]}\"")
             browser_iters.pop(chain, None)
     return jsonify({"ok": True})
+
+@app.route("/api/browser/session", methods=["GET","POST"])
+@auth
+def api_browser_session():
+    global browser_sessions
+    if request.method == "POST":
+        d = request.json or {}
+        urls = [u for u in (d.get("urls") or []) if isinstance(u, str) and u.startswith("http")]
+        if not urls:
+            return jsonify({"error":"No valid URLs, Sir."}), 400
+        browser_sessions = [{"urls": urls, "ts": time.time()}]
+        return jsonify({"ok": True, "saved": len(urls)})
+    return jsonify({"urls": browser_sessions[0]["urls"] if browser_sessions else []})
+
+@app.route("/api/research-log", methods=["GET","POST"])
+@auth
+def api_research_log():
+    global research_log
+    if request.method == "POST":
+        d = request.json or {}
+        research_log.insert(0, {
+            "id": str(uuid.uuid4())[:8],
+            "title": (d.get("title") or "Untitled")[:200],
+            "url": (d.get("url") or "")[:500],
+            "text": (d.get("text") or "")[:3000],
+            "label": (d.get("label") or "")[:100],
+            "ts": time.time(),
+        })
+        del research_log[200:]
+        return jsonify({"ok": True})
+    return jsonify({"log": research_log})
 
 @app.route("/webhook/telegram", methods=["POST"])
 def tg_webhook():

@@ -39,6 +39,19 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   }
 });
 
+// ── TAB HELPERS ───────────────────────────────────────────────────────
+async function findTabByTarget(target) {
+  const tabs = await chrome.tabs.query({});
+  if (target == null || target === '') return tabs.find(t => t.active) || tabs[0] || null;
+  const s = String(target).trim().toLowerCase();
+  if (/^\d+$/.test(s)) {
+    const i = parseInt(s, 10);
+    return tabs.find(t => t.index === i) || tabs[i] || null;
+  }
+  return tabs.find(t => (t.url || '').toLowerCase().includes(s))
+      || tabs.find(t => (t.title || '').toLowerCase().includes(s)) || null;
+}
+
 // ── EXECUTE A SINGLE STEP ─────────────────────────────────────────────
 async function execStep(step) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -215,6 +228,102 @@ async function execStep(step) {
           args: [step.key]
         });
         return { ok: true, done: `pressed ${step.key}` };
+      }
+
+      case 'list_tabs': {
+        const tabs = await chrome.tabs.query({});
+        const list = tabs
+          .filter(t => t.url && t.url.startsWith('http'))
+          .map(t => ({ index: t.index, url: t.url, title: t.title || '', active: !!t.active }))
+          .slice(0, 40);
+        return { ok: true, done: JSON.stringify(list) };
+      }
+
+      case 'read_tab': {
+        const target = await findTabByTarget(step.tab);
+        if (!target) return { ok: false, error: `tab "${step.tab}" not found` };
+        const [res] = await chrome.scripting.executeScript({
+          target: { tabId: target.id },
+          func: () => ({ url: location.href, title: document.title, text: (document.body?.innerText || '').slice(0, 8000) })
+        });
+        const r = res.result || {};
+        return { ok: true, done: `[${r.title}] ${r.url}\n${(r.text || '').slice(0, 8000)}` };
+      }
+
+      case 'switch_tab': {
+        const target = await findTabByTarget(step.tab);
+        if (!target) return { ok: false, error: `tab "${step.tab}" not found` };
+        await chrome.tabs.update(target.id, { active: true });
+        await chrome.windows.update(target.windowId, { focused: true }).catch(() => {});
+        return { ok: true, done: `switched to "${target.title || target.url}"` };
+      }
+
+      case 'close_tab': {
+        if (step.tab) {
+          const target = await findTabByTarget(step.tab);
+          if (!target) return { ok: false, error: `tab "${step.tab}" not found` };
+          await chrome.tabs.remove(target.id);
+          return { ok: true, done: `closed "${target.title || target.url}"` };
+        }
+        await chrome.tabs.remove(tab.id);
+        return { ok: true, done: 'closed current tab' };
+      }
+
+      case 'go_back':
+        await chrome.tabs.goBack(tab.id);
+        await waitForLoad(tab.id);
+        return { ok: true, done: 'went back' };
+
+      case 'go_forward':
+        await chrome.tabs.goForward(tab.id);
+        await waitForLoad(tab.id);
+        return { ok: true, done: 'went forward' };
+
+      case 'new_window': {
+        await chrome.windows.create({ url: step.url || 'about:blank' });
+        return { ok: true, done: 'opened new window' };
+      }
+
+      case 'group_tabs': {
+        const kw = (step.keyword || '').toLowerCase();
+        const tabs = (await chrome.tabs.query({}))
+          .filter(t => t.url && t.url.startsWith('http') &&
+                  (!kw || (t.title || '').toLowerCase().includes(kw) || (t.url || '').toLowerCase().includes(kw)));
+        if (tabs.length < 2) return { ok: true, done: kw ? `only ${tabs.length} tab matches "${kw}"` : 'not enough tabs to group' };
+        const groupId = await chrome.tabs.group({ tabIds: tabs.map(t => t.id) });
+        if (kw) await chrome.tabGroups.update(groupId, { title: kw }).catch(() => {});
+        return { ok: true, done: `grouped ${tabs.length} tabs${kw ? ` into "${kw}"` : ''}` };
+      }
+
+      case 'save_session': {
+        const tabs = (await chrome.tabs.query({})).filter(t => t.url && t.url.startsWith('http'));
+        const urls = tabs.map(t => t.url);
+        const r = await fetch(`${BACKEND}/api/browser/session`, {
+          method: 'POST', headers: headers(), body: JSON.stringify({ urls })
+        }).catch(() => null);
+        return { ok: !!r, done: `saved ${urls.length} tabs${r ? '' : ' (backend unreachable)'}` };
+      }
+
+      case 'restore_session': {
+        const r = await fetch(`${BACKEND}/api/browser/session`, { headers: headers() }).catch(() => null);
+        const urls = r ? (await r.json()).urls : [];
+        if (!urls || !urls.length) return { ok: false, error: 'no saved session found' };
+        await chrome.tabs.create({ url: urls[0] });
+        for (const u of urls.slice(1)) await chrome.tabs.create({ url: u });
+        return { ok: true, done: `restored ${urls.length} tabs` };
+      }
+
+      case 'save_tab': {
+        const [res] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: () => ({ url: location.href, title: document.title, text: (document.body?.innerText || '').slice(0, 3000) })
+        });
+        const r = res.result || {};
+        const post = await fetch(`${BACKEND}/api/research-log`, {
+          method: 'POST', headers: headers(),
+          body: JSON.stringify({ title: r.title, url: r.url, text: r.text, label: step.label || '' })
+        }).catch(() => null);
+        return { ok: !!post, done: post ? `saved "${r.title}" to research log` : 'backend unreachable — could not save' };
       }
 
       default:

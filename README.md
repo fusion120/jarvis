@@ -29,3 +29,12 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 - **Deep research** — the Research page (or "research …" voice command): Jarvis searches the web (Wikipedia + DuckDuckGo + article extraction) and returns a cited answer.
 - **Scheduled reminders** — the Reminders page lets you schedule a task with a date/time; Jarvis alerts you on Telegram when it's due.
 - **Canvas** — assignments auto-complete after the 2-hour window via the Telegram `CANVAS YES` → `SUBMIT` flow. The Canvas page's **Test Canvas** button confirms your token/domain are working.
+
+## Browser superpowers
+
+Jarvis can see and drive **all** your open tabs, not just the active one: `list_tabs`, `read_tab`/`switch_tab`/`close_tab` (by URL, title, or tab number), `go_back`/`go_forward`, `new_window`, `group_tabs` (auto-group tabs by topic), `save_session`/`restore_session` (save and reopen whole multi-tab sessions by voice), and `save_tab` (save the page you're on into the **Research Log**, shown on the Research page). Try: *"list my tabs"*, *"switch to the tab about X"*, *"group my tabs by project"*, *"save my session"*, or *"save this tab"*.
+
+## Smarter + more human
+
+- **Web-grounded answers** — for current-events/factual questions, Jarvis pulls fresh Google News + DuckDuckGo context before answering, with source links. No model change needed (still free `llama-3.3-70b-versatile`; swap via `GROQ_MODEL`).
+- **Human tone** — warmer, more natural persona in every reply, and the voice uses varied, natural acknowledgments.
