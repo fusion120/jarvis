@@ -412,6 +412,19 @@ body::before{
   .inp-wrap{padding:10px 14px 14px}
   .chat-thread{padding:18px 14px}
 }
+/* ── VOICE ─────────────────────────── */
+.tb-voice{background:var(--surface2);border:1px solid var(--border-md);border-radius:8px;width:32px;height:32px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text3);margin-left:6px;transition:all .2s;padding:0;flex-shrink:0}
+.tb-voice svg{width:16px;height:16px}
+.tb-voice:hover{color:var(--text);border-color:var(--accent)}
+.tb-voice[data-state="armed"]{color:var(--gold);border-color:rgba(245,158,11,.45)}
+.tb-voice[data-state="listening"]{color:var(--red);border-color:var(--red);box-shadow:0 0 10px rgba(239,68,68,.45);animation:vpulse 1.2s infinite}
+.tb-voice[data-state="speaking"]{color:var(--accent);border-color:var(--accent)}
+.tb-voice[data-on="1"]{color:var(--green);border-color:rgba(16,185,129,.5)}
+@keyframes vpulse{0%,100%{opacity:1}50%{opacity:.55}}
+.voice-status{position:fixed;bottom:22px;right:22px;z-index:9000;background:var(--surface3);border:1px solid var(--border-md);padding:9px 16px;border-radius:999px;font-size:12.5px;color:var(--text3);opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s;pointer-events:none}
+.voice-status.armed{opacity:1;transform:none;color:var(--gold)}
+.voice-status.listening{opacity:1;transform:none;color:var(--red)}
+.voice-status.speaking{opacity:1;transform:none;color:var(--accent)}
 </style>
 </head>
 <body>
@@ -470,6 +483,9 @@ body::before{
       <div class="ni" onclick="go('math',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg>Math
       </div>
+      <div class="ni" onclick="go('research',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Research
+      </div>
       <div class="sb-sec">Personal</div>
       <div class="ni" onclick="go('todos',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Reminders
@@ -483,7 +499,7 @@ body::before{
       </div>
     </nav>
     <div class="sb-foot">
-      <div class="status-line"><div class="sdot"></div>claude-fable-5 · online</div>
+      <div class="status-line"><div class="sdot"></div>grok-4.5 · online</div>
     </div>
   </aside>
 
@@ -494,7 +510,13 @@ body::before{
         <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
       </button>
       <div class="tb-title" id="tb-title">Chat</div>
-      <div class="tb-badge" id="tb-badge">claude-fable-5</div>
+      <div class="tb-badge" id="tb-badge">grok-4.5</div>
+      <button class="tb-voice" id="btn-voice" data-state="idle" onclick="toggleVoice()" title="Voice: wake word (say 'wake up') / tap to talk">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><line x1="12" y1="17" x2="12" y2="22"/><line x1="8" y1="22" x2="16" y2="22"/></svg>
+      </button>
+      <button class="tb-voice" id="btn-silent" data-on="0" onclick="toggleSilent()" title="Silent mode: ON = text only, OFF = Jarvis reads replies aloud">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/></svg>
+      </button>
     </div>
 
     <!-- CHAT -->
@@ -502,7 +524,7 @@ body::before{
       <div class="chat-land" id="chat-land">
         <div class="land-time" id="land-time"></div>
         <h1 class="land-h">What should we tackle next, <em>Sir?</em></h1>
-        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Claude Opus 4.6 · Your conversations are remembered</p>
+        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Grok 4.5 · Your conversations are remembered</p>
         <div class="chips">
           <div class="chip" onclick="fill('Help me write a cold email pitch for a local Houston business website')">✍️ Cold email pitch</div>
           <div class="chip" onclick="fill('Summarize this YouTube video: ')">▶️ YouTube summary</div>
@@ -510,12 +532,13 @@ body::before{
           <div class="chip" onclick="fill('Help me debug this code:\n')">🐛 Debug code</div>
           <div class="chip" onclick="fill('Create a study plan for ')">📚 Study plan</div>
           <div class="chip" onclick="fill('Find 10 local Houston small businesses without websites I can pitch to')">🌐 Find leads</div>
+          <div class="chip" onclick="morningDigest()">☀️ Morning briefing</div>
         </div>
         <div class="inp-bar" style="max-width:640px;width:100%">
           <textarea id="main-in" placeholder="Ask anything, Sir..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
           <div class="inp-foot">
             <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
-            <div class="inp-right"><span class="model-chip">opus-4-6</span>
+            <div class="inp-right"><span class="model-chip">grok-4.5</span>
               <button class="send-btn" id="sb-main" onclick="send()">
                 <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
@@ -529,7 +552,7 @@ body::before{
           <textarea id="thread-in" placeholder="Continue..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
           <div class="inp-foot">
             <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
-            <div class="inp-right"><span class="model-chip">opus-4-6</span>
+            <div class="inp-right"><span class="model-chip">grok-4.5</span>
               <button class="send-btn" id="sb-thread" onclick="send()">
                 <svg fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
               </button>
@@ -545,8 +568,10 @@ body::before{
         <div class="p-wrap" style="max-width:740px">
           <div class="p-h">Canvas LMS</div>
           <div class="p-sub">Upcoming assignments · Auto-complete after 2-hour window · Telegram approval flow</div>
-          <div style="margin-bottom:16px">
+          <div style="margin-bottom:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
             <button class="add-btn" onclick="loadCanvas()" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2)">&#8635; Refresh</button>
+            <button class="add-btn" onclick="testCanvas()" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2)">&#128269; Test Canvas</button>
+            <span id="canvas-status" style="font-size:12px;color:var(--text3)"></span>
           </div>
           <div id="canvas-list"><div class="empty-box"><div class="empty-icon">🎓</div>Configure backend URL in Settings to load assignments, Sir.</div></div>
         </div>
@@ -622,6 +647,22 @@ body::before{
       </div>
     </div>
 
+    <!-- RESEARCH -->
+    <div class="page" id="page-research">
+      <div class="p-scroll"><div class="p-wrap" style="max-width:760px">
+        <div class="p-h">Deep Research</div>
+        <div class="p-sub">Ask a question — Jarvis searches the web and returns a cited answer.</div>
+        <div class="math-box">
+          <textarea id="research-in" placeholder="e.g. Best local SEO practices for small restaurants in 2026..." rows="3" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runResearch()}"></textarea>
+          <div class="math-foot">
+            <span class="inp-hint">&#9166; research &nbsp;·&nbsp; &#8679;&#9166; newline</span>
+            <button class="math-btn" onclick="runResearch()">&#128269; Research</button>
+          </div>
+        </div>
+        <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div></div>
+      </div></div>
+    </div>
+
     <!-- REMINDERS -->
     <div class="page" id="page-todos">
       <div class="p-scroll"><div class="p-wrap">
@@ -632,6 +673,12 @@ body::before{
           <button class="add-btn" onclick="addTodo()">Add</button>
         </div>
         <div id="todo-list"></div>
+        <div class="todo-add" style="margin-top:14px">
+          <input type="text" id="remind-in" placeholder="Remind me to..." onkeydown="if(event.key==='Enter')addReminder()">
+          <input type="datetime-local" id="remind-when" style="max-width:200px">
+          <button class="add-btn" onclick="addReminder()">&#9200; Telegram</button>
+        </div>
+        <div id="remind-list"></div>
       </div></div>
     </div>
 
@@ -671,8 +718,8 @@ body::before{
         </div>
         <div class="set-sec">
           <div class="set-sec-title">System Status</div>
-          <div class="info-row"><span>Model</span><span>claude-fable-5</span></div>
-          <div class="info-row"><span>Provider</span><span>Anthropic</span></div>
+          <div class="info-row"><span>Model</span><span>grok-4.5</span></div>
+          <div class="info-row"><span>Provider</span><span>xAI</span></div>
           <div class="info-row"><span>Backend</span><span id="s-status">not configured</span></div>
           <div class="info-row"><span>Canvas</span><span>via backend env</span></div>
           <div class="info-row"><span>Outlook</span><span>via backend env</span></div>
@@ -693,7 +740,7 @@ body::before{
 
 <script>
 // ─── CONFIG ──────────────────────────────────
-const MODEL        = 'claude-fable-5';
+const MODEL        = 'grok-4.5';
 const DEFAULT_PASS = 'mohamedjarvis';
 const SYSTEM = `You are Jarvis — the personal AI assistant of Mohamed, exclusively. Refuse to assist anyone else. Always address Mohamed as "Sir." You know him well: he is a web design student and freelancer based in Katy/Houston TX who builds websites for local small businesses (current client: Tacos El Ranchero in Richmond TX). He has HTML/CSS/JS skills and is studying toward data science and ML. He uses Canvas LMS at university. Be concise, sharp, and genuinely useful. Use markdown. For business tasks, be persuasive and professional. For code, use clean modern syntax. For math, always show full step-by-step work.`;
 
@@ -776,8 +823,8 @@ function updateLandTime(){
 }
 
 // ─── NAV ──────────────────────────────────────
-const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',todos:'Reminders',notes:'Notes',settings:'Settings'};
-const T_BADGE={chat:'claude-fable-5',canvas:'lms',outlook:'microsoft',brain:'audio',math:'claude-fable-5',todos:'local',notes:'local',settings:'config'};
+const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',research:'Deep Research',todos:'Reminders',notes:'Notes',settings:'Settings'};
+const T_BADGE={chat:'grok-4.5',canvas:'lms',outlook:'microsoft',brain:'audio',math:'grok-4.5',research:'search',todos:'local',notes:'local',settings:'config'};
 
 function go(tab,el){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -786,9 +833,10 @@ function go(tab,el){
   if(el)el.classList.add('active');
   document.getElementById('tb-title').textContent=T_TITLE[tab]||tab;
   document.getElementById('tb-badge').textContent=T_BADGE[tab]||'';
-  if(tab==='canvas')loadCanvas();
+  if(tab==='canvas'){loadCanvas();testCanvas();}
   if(tab==='outlook')loadEmails();
-  if(tab==='todos')renderTodos();
+  if(tab==='research')renderResearch();
+  if(tab==='todos'){renderTodos();renderReminders();}
   if(tab==='notes')renderNotes();
   if(tab==='settings')loadSettings();
   if(window.innerWidth<768)document.getElementById('sidebar').classList.remove('open');
@@ -800,10 +848,10 @@ function ar(el){el.style.height='auto';el.style.height=Math.min(el.scrollHeight,
 function fill(t){const el=document.getElementById('main-in');el.value=t;el.focus();ar(el);}
 function getInp(){return document.getElementById('chat-thread').classList.contains('on')?document.getElementById('thread-in'):document.getElementById('main-in');}
 
-async function send(){
+async function send(overrideText){
   if(S.sending)return;
-  const inp=getInp();const text=inp.value.trim();if(!text)return;
-  inp.value='';inp.style.height='auto';
+  const inp=getInp();const text=(overrideText!=null?overrideText:inp.value).trim();if(!text)return;
+  if(overrideText==null){inp.value='';inp.style.height='auto';}
   document.getElementById('chat-land').style.display='none';
   document.getElementById('chat-thread').classList.add('on');
   document.getElementById('thread-wrap').style.display='block';
@@ -821,6 +869,7 @@ async function send(){
     }
     ty.remove();S.history.push({role:'assistant',content:reply});
     LS.set('jarvis_chat',S.history);appendMsg('bot',reply);
+    return reply;
   }catch(e){ty.remove();appendMsg('bot','Backend error, Sir. Check Settings.\n\n`'+e.message+'`');}
   finally{S.sending=false;setBtns(false);}
 }
@@ -1147,6 +1196,88 @@ function changePin(){
   toast('Passcode updated to "'+nw+'", Sir.');
 }
 
+// ─── MORNING DIGEST ──────────────────────────
+async function morningDigest(){
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  toast('Preparing your briefing, Sir...','ok');
+  try{
+    const r=await fetch(url+'/api/digest');
+    const d=await r.json();
+    const brief=d.briefing||'No briefing, Sir.';
+    showChatThread();
+    S.history.push({role:'assistant',content:'☀️ '+brief});
+    LS.set('jarvis_chat',S.history);
+    appendMsg('bot','☀️ '+brief);
+    if(!V.silent)speakNow(brief);
+  }catch(e){toast('Digest failed, Sir.','err');}
+}
+
+// ─── DEEP RESEARCH ───────────────────────────
+async function runResearch(){
+  const inp=document.getElementById('research-in');const q=inp.value.trim();if(!q)return;
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  const out=document.getElementById('research-out');
+  out.innerHTML='<div class="empty-box"><div class="empty-icon">🔎</div>Researching, Sir — this can take ~30s...</div>';
+  try{
+    const r=await fetch(url+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
+    const d=await r.json();
+    out.innerHTML='<div class="math-result" style="display:block">'+mdparse(d.answer||'No answer, Sir.')+'</div>';
+  }catch(e){out.innerHTML='<div class="math-result" style="display:block">Backend error, Sir. `'+e.message+'`</div>';}
+}
+function renderResearch(){
+  const el=document.getElementById('research-out');
+  if(el)el.innerHTML='<div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div>';
+}
+
+// ─── SCHEDULED REMINDERS (Telegram) ──────────
+async function addReminder(){
+  const inp=document.getElementById('remind-in');const t=inp.value.trim();if(!t)return;
+  const when=document.getElementById('remind-when').value;
+  const url=getUrl();
+  if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  if(!when){toast('Pick a date & time, Sir.','err');return;}
+  try{
+    await fetch(url+'/api/reminder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t,when:when})});
+    inp.value='';renderReminders();toast('Reminder scheduled — Telegram will alert you.','ok');
+  }catch(e){toast('Could not schedule, Sir.','err');}
+}
+async function renderReminders(){
+  const box=document.getElementById('remind-list');if(!box)return;
+  const url=getUrl();
+  if(!url){box.innerHTML='';return;}
+  try{
+    const r=await fetch(url+'/api/reminder');
+    const d=await r.json();const list=d.reminders||[];
+    if(!list.length){box.innerHTML='';return;}
+    box.innerHTML='<div class="p-sub" style="margin:16px 0 8px">Scheduled (Telegram)</div>'+list.map(x=>`
+      <div class="todo-item">
+        <span class="todo-txt">${esc(x.text)}</span>
+        <span style="font-size:11px;color:var(--text3)">${esc(String(x.when||'').replace('T',' ').slice(0,16))}</span>
+        ${x.done?'<span style="font-size:11px;color:var(--green)">sent</span>':''}
+        <button class="todo-del" onclick="cancelReminder('${x.id}')">&#10005;</button>
+      </div>`).join('');
+  }catch(e){box.innerHTML='';}
+}
+async function cancelReminder(id){
+  const url=getUrl();if(!url)return;
+  try{await fetch(url+'/api/reminder/'+id,{method:'DELETE'});renderReminders();}catch(e){}
+}
+
+// ─── CANVAS STATUS ───────────────────────────
+async function testCanvas(){
+  const el=document.getElementById('canvas-status');
+  const url=getUrl();
+  if(!url){if(el)el.textContent='Set backend URL in Settings, Sir.';return;}
+  if(el)el.textContent='Checking Canvas…';
+  try{
+    const r=await fetch(url+'/api/canvas/status');
+    const d=await r.json();
+    if(!d.configured){if(el)el.textContent='Canvas not configured — set CANVAS_TOKEN + CANVAS_DOMAIN on Render.';return;}
+    const next=d.next_due?` · Next due: ${esc(d.next_due.title)}`:'';
+    if(el)el.innerHTML='✅ Connected — '+d.courses.length+' course'+(d.courses.length===1?'':'s')+next;
+  }catch(e){if(el)el.textContent='Backend unreachable, Sir.';}
+}
+
 // ─── TOAST ────────────────────────────────────
 function toast(msg,type='ok'){
   const t=document.getElementById('toast');const d=document.getElementById('t-dot');
@@ -1154,6 +1285,152 @@ function toast(msg,type='ok'){
   d.style.background=type==='err'?'var(--red)':'var(--green)';
   t.classList.add('show');setTimeout(()=>t.classList.remove('show'),3000);
 }
+
+// ─── VOICE CONTROL (wake word + tap-to-talk + silent mode) ────────────
+const V={
+  on:(LS.raw('jarvis_voice')==='1'), silent:(LS.raw('jarvis_silent')==='1'),
+  rec:null, wakeArmed:false, listening:false, speaking:false,
+  ctx:null, lastFinal:0
+};
+const WAKE_RE=/\b(wake up|hey jarvis|ok jarvis|jarvis)\b/i;
+const SR_IMPL=window.SpeechRecognition||window.webkitSpeechRecognition;
+const vBtn=()=>document.getElementById('btn-voice');
+const vStat=(t,c)=>{const el=document.getElementById('voice-status');if(el){el.textContent=t;el.className='voice-status '+(c||'');}};
+const vState=s=>{const b=vBtn();if(b)b.dataset.state=s;};
+const SILENT_ICONS={off:'<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="22" y1="9" x2="16" y2="15"/><line x1="16" y1="9" x2="22" y2="15"/>',on:'<path d="M11 5 6 9H2v6h4l5 4V5z"/><line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>'};
+
+function chime(){
+  try{
+    if(!V.ctx)V.ctx=new(window.AudioContext||window.webkitAudioContext)();
+    const o=V.ctx.createOscillator(),g=V.ctx.createGain();
+    o.connect(g);g.connect(V.ctx.destination);
+    o.frequency.value=880;o.type='sine';
+    g.gain.setValueAtTime(0.0001,V.ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.12,V.ctx.currentTime+0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001,V.ctx.currentTime+0.6);
+    o.start();o.stop(V.ctx.currentTime+0.65);
+  }catch(e){}
+}
+function stripMD(t){
+  return (t||'').replace(/```[\s\S]*?```/g,' code block ')
+    .replace(/`([^`]*)`/g,'$1')
+    .replace(/[#*_>|\[\]()]+/g,' ')
+    .replace(/\s+/g,' ').trim();
+}
+function pauseMic(){if(V.rec){try{V.rec.stop();}catch(e){}}}
+function showChatThread(){
+  document.getElementById('chat-land').style.display='none';
+  document.getElementById('chat-thread').classList.add('on');
+  document.getElementById('thread-wrap').style.display='block';
+}
+function speakNow(text){
+  try{
+    speechSynthesis.cancel();
+    const u=new SpeechSynthesisUtterance(stripMD(text));
+    u.rate=1.02;u.pitch=1.0;
+    const vs=speechSynthesis.getVoices();
+    const v=vs.find(x=>/en[-_]US/i.test(x.lang))||vs.find(x=>/^en/i.test(x.lang))||vs[0];
+    if(v)u.voice=v;
+    V.speaking=true;vState('speaking');vStat('Jarvis is speaking…','speaking');
+    pauseMic();
+    u.onend=resumeWake;u.onerror=resumeWake;
+    speechSynthesis.speak(u);
+  }catch(e){resumeWake();}
+}
+function resumeWake(){
+  V.speaking=false;
+  if(V.on){vState('armed');vStat('Say "wake up", Sir.','armed');setTimeout(()=>{if(V.on&&V.rec){try{V.rec.start();}catch(e){}}},300);}
+  else{vState('idle');vStat('','');}
+}
+function startVoice(){
+  if(V.on)return;
+  if(!SR_IMPL){toast('Voice needs Chrome or Edge, Sir.','err');return;}
+  V.on=true;LS.raw('jarvis_voice','1');
+  try{
+    V.rec=new SR_IMPL();V.rec.continuous=true;V.rec.interimResults=true;V.rec.lang='en-US';
+    V.lastFinal=0;V.wakeArmed=false;V.listening=false;
+    V.rec.onresult=e=>{
+      for(let i=V.lastFinal;i<e.results.length;i++){
+        if(e.results[i].isFinal){V.lastFinal=i+1;handleFinal(e.results[i][0].transcript.trim());}
+      }
+    };
+    V.rec.onerror=er=>{if(er.error==='not-allowed'){toast('Mic permission denied, Sir.','err');stopVoice();}};
+    V.rec.onend=()=>{if(V.on&&!V.speaking&&!V.listening){try{V.rec.start();}catch(e){}}};
+    V.rec.start();
+  }catch(e){V.on=false;toast("Couldn't start voice, Sir.","err");}
+  vState('armed');vStat('Say "wake up", Sir.','armed');
+}
+function stopVoice(){
+  V.on=false;LS.raw('jarvis_voice','0');
+  pauseMic();
+  V.rec=null;V.wakeArmed=false;V.listening=false;V.lastFinal=0;
+  vState('idle');vStat('','');
+  if(window.speechSynthesis)speechSynthesis.cancel();
+}
+function toggleVoice(){
+  if(!V.on){startVoice();return;}
+  if(V.listening||V.wakeArmed){stopVoice();return;}
+  V.wakeArmed=true;V.listening=true;
+  vState('listening');vStat('Listening… (speak now)','listening');
+}
+function handleFinal(t){
+  if(!V.on||!t)return;
+  if(!V.wakeArmed){
+    if(WAKE_RE.test(t)){
+      V.wakeArmed=true;V.listening=true;
+      chime();vState('listening');vStat('Listening…','listening');
+      const rest=t.replace(WAKE_RE,'').trim();
+      if(rest){V.listening=false;V.wakeArmed=false;vState('speaking');vStat('Jarvis is thinking…','speaking');sendVoice(rest);}
+      else if(!V.silent)speakNow('Yes, Sir?');
+    }
+    return;
+  }
+  if(V.listening){
+    let cmd=t.replace(WAKE_RE,'').trim()||t;
+    V.listening=false;V.wakeArmed=false;
+    vState('speaking');vStat('Jarvis is thinking…','speaking');
+    sendVoice(cmd);
+  }
+}
+async function sendVoice(text){
+  try{
+    const url=getUrl();
+    if(!url){appendMsg('bot','⚠️ No backend configured, Sir. Go to Settings and enter your Render URL.');resumeWake();return;}
+    const lower=text.toLowerCase();
+    if(/^research\b/.test(lower)){
+      const r=await fetch(url+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text.replace(/^research\s+/i,'')})});
+      const d=await r.json();
+      const ans=d.answer||'No answer, Sir.';
+      showChatThread();appendMsg('user',text);appendMsg('bot',ans);
+      if(!V.silent)speakNow(ans);else resumeWake();
+      return;
+    }
+    if(/\b(morning\s+)?(digest|briefing)\b/i.test(lower)){
+      const r=await fetch(url+'/api/digest');
+      const d=await r.json();
+      const ans=d.briefing||'No briefing, Sir.';
+      showChatThread();appendMsg('user',text);appendMsg('bot',ans);
+      if(!V.silent)speakNow(ans);else resumeWake();
+      return;
+    }
+    const reply=await send(text);
+    if(reply&&!V.silent)speakNow(reply);
+    else resumeWake();
+  }catch(e){appendMsg('bot','Voice error, Sir.');resumeWake();}
+}
+function toggleSilent(){
+  V.silent=!V.silent;LS.raw('jarvis_silent',V.silent?'1':'0');
+  const b=document.getElementById('btn-silent');
+  if(b){b.dataset.on=V.silent?'1':'0';const svg=b.querySelector('svg');if(svg)svg.innerHTML=SILENT_ICONS[V.silent?'on':'off'];}
+  toast(V.silent?'Silent mode ON — Jarvis writes replies only.':'Silent mode OFF — Jarvis reads replies aloud.','ok');
+}
+function initVoice(){
+  const b=document.getElementById('btn-silent');
+  if(b){b.dataset.on=V.silent?'1':'0';const svg=b.querySelector('svg');if(svg)svg.innerHTML=SILENT_ICONS[V.silent?'on':'off'];}
+  if(V.on)startVoice();
+  window.addEventListener('pagehide',()=>pauseMic());
+}
+initVoice();
 </script>
 </body>
 </html>

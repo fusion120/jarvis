@@ -1,6 +1,6 @@
 """
 JARVIS BACKEND v3.0
-- AI: Claude (Anthropic) — claude-fable-5
+- AI: Grok (xAI) — grok-4.5
 - Security: API_SECRET token + CORS whitelist
 - Canvas: 2hr timer + Telegram approval flow
 - Outlook: Background polling every 10 min → Telegram summary + draft approval
@@ -21,8 +21,8 @@ CORS(app, origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else "*",
      allow_headers=["Content-Type", "X-Jarvis-Token"])
 
 # ── CONFIG (all from Render env vars — never hardcode) ────────────────
-CLAUDE_KEY     = os.getenv("CLAUDE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
-CLAUDE_MODEL   = os.getenv("CLAUDE_MODEL", "claude-fable-5")  # or claude-opus-5 / claude-sonnet-5 / claude-haiku-4-5
+GROK_KEY       = os.getenv("GROK_API_KEY") or os.getenv("XAI_API_KEY", "")
+GROK_MODEL     = os.getenv("GROK_MODEL", "grok-4.5")  # or grok-4.3 / grok-4.20-0309-reasoning
 API_SECRET     = os.getenv("API_SECRET", "")       # random string you set on Render
 TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -33,6 +33,8 @@ OUTLOOK_PASS   = os.getenv("OUTLOOK_PASSWORD", "") # app password (personal) or 
 IMAP_SERVER    = os.getenv("IMAP_SERVER", "outlook.office365.com")  # or imap-mail.outlook.com
 SMTP_SERVER    = os.getenv("SMTP_SERVER", "smtp.office365.com")
 POLL_SECS      = int(os.getenv("OUTLOOK_POLL_SECS", "600"))  # 10 min default
+DIGEST_TIME    = os.getenv("DIGEST_TIME", "12:00")  # HH:MM daily digest (UTC by default)
+DIGEST_TZ      = os.getenv("DIGEST_TZ", "+00:00")   # timezone offset, e.g. -05:00 for Houston (CT)
 
 SYSTEM = ("You are Jarvis — personal AI assistant to Mohamed exclusively. "
           "Always call him Sir. He is a web design student/freelancer in Katy/Houston TX "
@@ -67,17 +69,17 @@ def auth(f):
         return f(*args, **kwargs)
     return decorated
 
-# ── CLAUDE AI (Anthropic Messages API) ────────────────────────────────
-def _claude_call(messages, system=None, max_tokens=2000, temperature=0.7):
-    """One call to the Anthropic Messages API. Returns response text, or None."""
-    if not CLAUDE_KEY:
+# ── GROK AI (xAI OpenAI-compatible API) ───────────────────────────────
+def _grok_call(messages, system=None, max_tokens=2000, temperature=0.7):
+    """One call to the xAI chat completions API. Returns response text, or None."""
+    if not GROK_KEY:
         return None
     msgs = []
     for m in messages or []:
         role, content = m.get("role"), (m.get("content") or "").strip()
         if role not in ("user", "assistant") or not content:
             continue
-        if msgs and msgs[-1]["role"] == role:      # Anthropic expects alternating roles
+        if msgs and msgs[-1]["role"] == role:      # fold consecutive same-role turns
             msgs[-1]["content"] += "\n\n" + content
         else:
             msgs.append({"role": role, "content": content})
@@ -85,29 +87,26 @@ def _claude_call(messages, system=None, max_tokens=2000, temperature=0.7):
         msgs.pop(0)
     if not msgs:
         return None
-    headers = {"x-api-key": CLAUDE_KEY, "anthropic-version": "2023-06-01",
-               "content-type": "application/json"}
-    body = {"model": CLAUDE_MODEL, "max_tokens": max_tokens,
-            "temperature": temperature, "messages": msgs}
-    if system:
-        body["system"] = system
+    headers = {"Authorization": f"Bearer {GROK_KEY}", "Content-Type": "application/json"}
+    body = {"model": GROK_MODEL, "max_completion_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": [{"role": "system", "content": system or SYSTEM}] + msgs}
     try:
-        r = requests.post("https://api.anthropic.com/v1/messages",
+        r = requests.post("https://api.x.ai/v1/chat/completions",
                           headers=headers, json=body, timeout=60)
         r.raise_for_status()
         data = r.json()
-        return "".join(b.get("text", "") for b in data.get("content", [])
-                       if b.get("type") == "text")
+        return data["choices"][0]["message"]["content"]
     except Exception as e:
-        print(f"Claude API error: {e}")
+        print(f"Grok API error: {e}")
         return None
 
 def ask(messages, system=None, max_tokens=2000, temperature=0.7):
-    """Free-form text completion via Claude."""
-    if not CLAUDE_KEY:
-        return "CLAUDE_API_KEY not set on Render, Sir. Add it in Environment Variables."
-    text = _claude_call(messages, system=system or SYSTEM,
-                        max_tokens=max_tokens, temperature=temperature)
+    """Free-form text completion via Grok."""
+    if not GROK_KEY:
+        return "GROK_API_KEY not set on Render, Sir. Add it in Environment Variables."
+    text = _grok_call(messages, system=system or SYSTEM,
+                      max_tokens=max_tokens, temperature=temperature)
     return text if text is not None else "AI error, Sir."
 
 # ── TELEGRAM ──────────────────────────────────────────────────────────
@@ -293,16 +292,16 @@ def outlook_loop():
         time.sleep(POLL_SECS)
         try:
             emails = get_emails(top=15)
-            new_ones = [e for e in emails if e["id"] not in seen_emails and not e.get("isRead", True)]
+            new_ones = [e for e in emails if e["id"] not in seen_emails and e.get("unread", False)]
             for e in new_ones[:5]:
                 eid = e["id"]
                 seen_emails.add(eid)
-                sender = e.get("from", {}).get("emailAddress", {})
-                fname = sender.get("name", "Unknown")
-                faddr = sender.get("address", "")
-                subj  = e.get("subject", "(no subject)")
-                body  = re.sub(r"<[^<]+?>"," ", e.get("body",{}).get("content","") or e.get("bodyPreview","")).strip()[:3000]
-                recv  = e.get("receivedDateTime","")[:16].replace("T"," ")
+                sender = e.get("from","Unknown")
+                fname = re.sub(r"<[^>]+>","", sender).strip() or "Unknown"
+                faddr = (re.search(r"<([^>]+)>", sender).group(1) if re.search(r"<([^>]+)>", sender) else sender)
+                subj  = e.get("subject","(no subject)")
+                body  = e.get("body","")[:3000]
+                recv  = e.get("date","")[:16]
 
                 summary = ask([{"role":"user","content":f"Summarize this email in 3-4 bullet points:\nFrom: {fname}\nSubject: {subj}\n\n{body}"}],
                               system="Jarvis email assistant. Summarize concisely with bullet points.")
@@ -332,8 +331,8 @@ def outlook_loop():
 # natural-language commands (AI plans steps, then re-plans until done).
 KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
                  "click_text","click_selector","type_selector","type_label",
-                 "run_js","scroll","wait","press_key"}
-STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key"}
+                 "search","run_js","scroll","wait","press_key"}
+STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key","query"}
 BROWSER_MAX_STEPS = 8
 BROWSER_MAX_ITERS = 12          # guard against infinite agentic loops
 
@@ -342,6 +341,7 @@ browser_running   = {}          # task_id → task being executed
 browser_results   = {}          # task_id → last result
 browser_tab_state = {}          # last tab reported by the extension
 browser_iters     = {}          # command chain → iterations left
+browser_delivered = set()       # task ids already handed to the extension (runs-once guard)
 browser_last_seen = 0.0         # epoch seconds of last tab ping
 browser_answers   = []          # recent finished results {command, answer, ts}
 
@@ -354,18 +354,19 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"click_selector","selector":"css selector"}
 - {"action":"type_selector","selector":"css selector","value":"text"}
 - {"action":"type_label","label":"input label or placeholder","value":"text"}
+- {"action":"search","query":"text to search the site's own search box"}
 - {"action":"scroll","y":500}
 - {"action":"wait","ms":1000}
 - {"action":"press_key","key":"Enter"}
 - {"action":"run_js","code":"return document.title"}
-Prefer clicking by visible text; add a wait after navigating."""
+To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating."""
 
 def ask_json(system, user):
-    """Ask Claude for a JSON object (strip markdown fences if any)."""
-    if not CLAUDE_KEY:
+    """Ask Grok for a JSON object (strip markdown fences if any)."""
+    if not GROK_KEY:
         return None
-    text = _claude_call([{"role": "user", "content": user}], system=system,
-                        max_tokens=2000, temperature=0.2)
+    text = _grok_call([{"role": "user", "content": user}], system=system,
+                      max_tokens=2000, temperature=0.2)
     if not text:
         return None
     text = re.sub(r"^```[a-z]*\n?", "", text.strip())
@@ -439,7 +440,7 @@ BROWSER_RE = re.compile(
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
-    return jsonify({"status":"online","model":CLAUDE_MODEL,"message":"Jarvis online, Sir."})
+    return jsonify({"status":"online","model":GROK_MODEL,"message":"Jarvis online, Sir."})
 
 @app.route("/api/chat", methods=["POST"])
 @auth
@@ -649,6 +650,11 @@ def browser_poll():
     if not browser_queue:
         return jsonify({"task": None})
     task = browser_queue.pop(0)
+    if task["id"] in browser_delivered:      # runs-once guard: never hand out the same task twice
+        return jsonify({"task": None})
+    browser_delivered.add(task["id"])
+    if len(browser_delivered) > 300:
+        browser_delivered.clear()            # bound memory; ids only need to last while queued
     browser_running[task["id"]] = task
     return jsonify({"task": task, "queue": len(browser_queue)})
 
@@ -755,12 +761,199 @@ def tg_webhook():
 
     return "OK"
 
+# ── MORNING DIGEST ────────────────────────────────────────────────────
+import datetime
+last_digest_day = None
+
+def _digest_now():
+    """Server UTC time + DIGEST_TZ offset (Render clocks are UTC)."""
+    try:
+        sign = -1 if str(DIGEST_TZ).startswith("-") else 1
+        hh, mm = re.split(r"[:.]", str(DIGEST_TZ).lstrip("+-"), 1)[:2]
+        off = sign * (int(hh) + int(mm) / 60)
+    except Exception:
+        off = 0
+    return datetime.datetime.utcnow() + datetime.timedelta(hours=off)
+
+def run_digest():
+    parts = []
+    try:
+        emails = get_emails(top=12)
+        unread = [e for e in emails if e.get("unread", False)][:5] or emails[:3]
+        if unread:
+            lines = [f"• {re.sub(r'<[^>]+>','',e.get('from','Unknown')).strip()}: {e.get('subject','(no subject)')}" for e in unread[:5]]
+            parts.append("New mail:\n" + "\n".join(lines))
+    except Exception as e:
+        print("digest email err", e)
+    try:
+        assigns = get_assignments()[:5]
+        if assigns:
+            lines = [f"• {a['title']} ({a.get('course','')}) — due {a.get('due','?')}" for a in assigns[:5]]
+            parts.append("Upcoming assignments:\n" + "\n".join(lines))
+    except Exception as e:
+        print("digest canvas err", e)
+    try:
+        today = _digest_now().date().isoformat()
+        due = [r for r in REMINDERS if str(r.get("when","")).startswith(today) and not r.get("done")]
+        if due:
+            parts.append("Reminders today:\n" + "\n".join(f"• {r['text']}" for r in due[:5]))
+    except Exception as e:
+        print("digest reminder err", e)
+    try:
+        import xml.etree.ElementTree as ET
+        r = requests.get("https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en", timeout=10)
+        items = ET.fromstring(r.content).findall(".//item")[:5]
+        if items:
+            parts.append("Top headlines:\n" + "\n".join("• " + (i.findtext("title") or "") for i in items))
+    except Exception as e:
+        print("digest news err", e)
+    if not parts:
+        return "Nothing new this morning, Sir. All quiet."
+    raw = "\n\n".join(parts)
+    brief = ask([{"role":"user","content":"Write a short spoken-friendly morning briefing (max 250 words) from this raw material:\n\n" + raw}],
+                system="You are Jarvis. Summarize concisely for Mohamed ('Sir') in short bullets. Max 250 words. No extra commentary.",
+                max_tokens=700, temperature=0.5)
+    if not brief or "AI error" in brief:
+        brief = raw
+    tg(f"☀️ <b>MORNING DIGEST, SIR</b>\n\n{brief}")
+    return brief
+
+@app.route("/api/digest", methods=["GET"])
+@auth
+def api_digest():
+    return jsonify({"briefing": run_digest()})
+
+def digest_loop():
+    global last_digest_day
+    while True:
+        time.sleep(60)
+        try:
+            now = _digest_now()
+            if now.strftime("%H:%M") == DIGEST_TIME and last_digest_day != now.date().isoformat():
+                last_digest_day = now.date().isoformat()
+                run_digest()
+        except Exception as e:
+            print("digest loop err", e)
+
+# ── DEEP RESEARCH ─────────────────────────────────────────────────────
+def research(question):
+    queries = [question]
+    obj = ask_json("You are a research planner. Return JSON {\"queries\": [\"...\",\"...\"]} with 2-3 distinct, targeted search queries (max ~10 words each).",
+                   f"Research topic: {question}")
+    if obj and isinstance(obj.get("queries"), list):
+        qs = [q for q in obj["queries"] if isinstance(q, str) and q.strip()]
+        if qs:
+            queries = qs[:3]
+    snippets, sources = [], []
+    for q in queries:
+        try:
+            r = requests.get("https://en.wikipedia.org/w/api.php",
+                             params={"action":"query","list":"search","srsearch":q,"format":"json","srlimit":"3"},
+                             timeout=12).json()
+            for hit in (r.get("query",{}).get("search",[])[:2]):
+                title = hit.get("title","")
+                page = requests.get("https://en.wikipedia.org/api/rest_v1/page/summary/" +
+                                    requests.utils.quote(title.replace(" ","_")), timeout=12).json()
+                ext = (page.get("extract") or "")[:900]
+                url = (page.get("content_urls",{}).get("desktop",{}).get("page","")
+                       or f"https://en.wikipedia.org/wiki/{title.replace(' ','_')}")
+                if ext:
+                    snippets.append(ext); sources.append(url)
+        except Exception as e:
+            print("research wiki err", e)
+        try:
+            r = requests.get("https://api.duckduckgo.com/",
+                             params={"q":q,"format":"json","no_html":1,"skip_disambig":1}, timeout=12).json()
+            abs_ = (r.get("Abstract","") or "").strip()
+            if abs_:
+                snippets.append(abs_[:900]); sources.append(r.get("AbstractURL") or r.get("Heading") or q)
+        except Exception as e:
+            print("research ddg err", e)
+    if not snippets:
+        return "I couldn't find enough to answer that reliably, Sir. Try rewording it."
+    sys = ("You are Jarvis doing deep research for Mohamed. Synthesize the provided source snippets into a clear "
+           "answer with inline numbered citations like [1][2]. End with a 'Sources:' list of the URLs. Be accurate; "
+           "if sources conflict, say so.")
+    user = f"Question: {question}\n\nSource snippets:\n" + \
+           "\n\n".join(f"[{i+1}] {s}" for i,s in enumerate(snippets[:12])) + \
+           "\n\nSource URLs:\n" + "\n".join(sources[:12])
+    ans = ask([{"role":"user","content":user}], system=sys, max_tokens=2000, temperature=0.3)
+    return ans or "No answer, Sir."
+
+@app.route("/api/research", methods=["POST"])
+@auth
+def api_research():
+    d = request.json or {}
+    q = (d.get("question") or "").strip()
+    if not q:
+        return jsonify({"error":"Provide a question, Sir."}), 400
+    return jsonify({"answer": research(q)})
+
+# ── SCHEDULED REMINDERS (Telegram) ────────────────────────────────────
+REMINDERS = []   # {id, text, when (ISO), done}
+
+@app.route("/api/reminder", methods=["GET","POST"])
+@auth
+def api_reminder():
+    if request.method == "GET":
+        return jsonify({"reminders": sorted(REMINDERS, key=lambda r: r.get("when",""))})
+    d = request.json or {}
+    text = (d.get("text") or "").strip()
+    when = (d.get("when") or "").strip()
+    if not text:
+        return jsonify({"error":"Provide 'text', Sir."}), 400
+    if when:
+        try:
+            datetime.datetime.fromisoformat(when.replace("Z","+00:00"))
+        except Exception:
+            return jsonify({"error":"Invalid 'when' (ISO datetime), Sir."}), 400
+    REMINDERS.append({"id": str(uuid.uuid4())[:8], "text": text, "when": when, "done": False})
+    if len(REMINDERS) > 200:
+        REMINDERS[:] = [r for r in REMINDERS if not r.get("done")][-200:]
+    return jsonify({"ok": True})
+
+@app.route("/api/reminder/<rid>", methods=["DELETE"])
+@auth
+def api_reminder_delete(rid):
+    global REMINDERS
+    REMINDERS = [r for r in REMINDERS if r.get("id") != rid]
+    return jsonify({"ok": True})
+
+def reminder_loop():
+    while True:
+        time.sleep(30)
+        now = datetime.datetime.now().strftime("%Y-%m-%dT%H:%M")
+        for r in REMINDERS:
+            if not r.get("done") and r.get("when") and str(r["when"])[:16] <= now:
+                r["done"] = True
+                tg(f"⏰ <b>REMINDER, SIR</b>\n\n{r['text']}")
+
+# ── CANVAS STATUS ─────────────────────────────────────────────────────
+@app.route("/api/canvas/status", methods=["GET"])
+@auth
+def api_canvas_status():
+    configured = bool(CANVAS_TOK and CANVAS_DOM)
+    courses, next_due = [], None
+    if configured:
+        try:
+            for c in (canvas("/courses?enrollment_state=active&per_page=30") or []):
+                if c.get("name"): courses.append(c["name"])
+            assigns = get_assignments()
+            if assigns:
+                due = sorted(assigns, key=lambda a: a.get("due",""))[0]
+                next_due = {"title": due.get("title",""), "due": due.get("due",""), "course": due.get("course","")}
+        except Exception as e:
+            print("canvas status err", e)
+    return jsonify({"configured": configured, "courses": courses, "next_due": next_due})
+
 # ── START ─────────────────────────────────────────────────────────────
 # Start background loops at import time so they run under gunicorn too
 # (gunicorn never executes the __main__ block). One worker = one set of
 # loops; Render's default `gunicorn app11:app` uses a single worker.
 threading.Thread(target=canvas_loop, daemon=True).start()
 threading.Thread(target=outlook_loop, daemon=True).start()
+threading.Thread(target=digest_loop, daemon=True).start()
+threading.Thread(target=reminder_loop, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

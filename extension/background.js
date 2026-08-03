@@ -63,14 +63,14 @@ async function execStep(step) {
           func: () => ({
             url: location.href,
             title: document.title,
-            text: document.body?.innerText?.slice(0, 6000) || '',
+            text: document.body?.innerText?.slice(0, 12000) || '',
             inputs: [...document.querySelectorAll('input,textarea,select')]
               .map(el => ({ tag: el.tagName, type: el.type, name: el.name, placeholder: el.placeholder, value: el.value }))
               .slice(0, 30),
             links: [...document.querySelectorAll('a[href]')]
               .map(el => ({ text: el.innerText?.trim(), href: el.href }))
               .filter(l => l.text)
-              .slice(0, 30)
+              .slice(0, 80)
           })
         });
         return { ok: true, data: res.result };
@@ -86,7 +86,7 @@ async function execStep(step) {
           target: { tabId: tab.id },
           func: (text) => {
             const all = [...document.querySelectorAll('button,a,[role=button],[role=menuitem],input[type=submit],input[type=button]')];
-            const el = all.find(e => e.innerText?.trim().toLowerCase().includes(text.toLowerCase()) || e.value?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('aria-label')?.toLowerCase().includes(text.toLowerCase()));
+            const el = all.find(e => e.innerText?.trim().toLowerCase().includes(text.toLowerCase()) || e.value?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('aria-label')?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('title')?.toLowerCase().includes(text.toLowerCase()));
             if (el) { el.click(); return 'clicked: ' + el.innerText?.trim(); }
             // fallback: any element
             const any = [...document.querySelectorAll('*')].find(e => e.childElementCount === 0 && e.innerText?.trim().toLowerCase().includes(text.toLowerCase()));
@@ -147,6 +147,39 @@ async function execStep(step) {
           args: [step.label, step.value]
         });
         return { ok: !!r.result, done: r.result ? `typed in "${step.label}"` : `label "${step.label}" not found` };
+      }
+
+      case 'search': {
+        // Type into the site's search box and submit its form (real submit,
+        // more reliable than a synthetic Enter for YouTube/Gmail/etc).
+        const [r] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (query) => {
+            const q = (query || '').trim(); if (!q) return null;
+            const inputs = [...document.querySelectorAll('input,textarea')]
+              .filter(el => el.offsetParent !== null);
+            const pick = inputs.find(el => /search|query|\bq\b/i.test((el.getAttribute('name')||'') + ' ' + (el.placeholder||'') + ' ' + (el.getAttribute('id')||'')))
+              || inputs.find(el => el.type === 'search')
+              || inputs[0];
+            if (!pick) return 'no search input found';
+            pick.focus();
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+              || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+            if (setter) setter.call(pick, q); else pick.value = q;
+            pick.dispatchEvent(new Event('input', { bubbles: true }));
+            pick.dispatchEvent(new Event('change', { bubbles: true }));
+            const form = pick.closest('form');
+            if (form && typeof form.requestSubmit === 'function') { form.requestSubmit(); return 'searched (form submit): ' + q; }
+            const btn = (form && form.querySelector('[type=submit],button'))
+              || document.querySelector('button[aria-label*="search" i],button[aria-label*="Search" i]');
+            if (btn) { btn.click(); return 'searched (button): ' + q; }
+            pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+            pick.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
+            return 'searched (enter): ' + q;
+          },
+          args: [step.query]
+        });
+        return { ok: !!r.result, done: r.result || 'search failed' };
       }
 
       case 'run_js': {
@@ -232,7 +265,7 @@ async function poll() {
             func: () => ({
               url: location.href,
               title: document.title,
-              text: document.body?.innerText?.slice(0, 3000) || ''
+              text: document.body?.innerText?.slice(0, 6000) || ''
             })
           });
           pageData = res.result;
