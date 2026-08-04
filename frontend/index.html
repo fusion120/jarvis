@@ -771,7 +771,8 @@ body::before{
         <div class="p-sub">APIs will be configured here once provided, Sir.</div>
         <div class="set-sec">
           <div class="set-sec-title">Backend Connection</div>
-          <div class="field"><label>Render Backend URL</label><input type="text" id="s-url" placeholder="https://jarvis-api.onrender.com"></div>
+          <div class="field"><label>Render Backend URL</label><input type="text" id="s-url" placeholder="https://jarvis-3hff.onrender.com"></div>
+          <div class="field"><label>API Secret</label><input type="password" id="s-secret" placeholder="Same secret you set in Render" autocomplete="off"></div>
           <button class="save-btn" onclick="saveSettings()">Save & Connect</button>
         </div>
         <div class="set-sec">
@@ -826,6 +827,14 @@ const LS = {
 };
 const getPass = ()=>LS.raw('jarvis_pass')||DEFAULT_PASS;
 const getUrl  = ()=>LS.raw('jarvis_url').replace(/\/$/,'');
+const getSecret=()=>LS.raw('jarvis_secret')||'';
+// Attach the API secret to every backend request automatically
+const _jfetch=window.fetch;
+window.fetch=function(u,o){
+  o=o||{};o.headers=o.headers||{};
+  if(typeof u==='string'&&u.includes('/api/')&&getSecret())o.headers['X-Jarvis-Token']=getSecret();
+  return _jfetch.call(this,u,o);
+};
 
 // ─── LOCK SCREEN ─────────────────────────────
 function tryUnlock(){
@@ -1324,11 +1333,13 @@ function saveNote(){
 function loadSettings(){
   const url=LS.raw('jarvis_url');
   document.getElementById('s-url').value=url||'';
+  document.getElementById('s-secret').value=LS.raw('jarvis_secret')||'';
   document.getElementById('s-status').textContent=url?'connected':'not configured';
 }
 function saveSettings(){
   const url=document.getElementById('s-url').value.trim().replace(/\/$/,'');
   LS.raw_set('jarvis_url',url);
+  LS.raw_set('jarvis_secret',document.getElementById('s-secret').value.trim());
   document.getElementById('s-status').textContent=url?'connected':'not configured';
   toast('Settings saved, Sir.');
 }
