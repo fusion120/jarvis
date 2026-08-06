@@ -778,6 +778,37 @@ CODE_RE = re.compile(
     r"write tests (for|to)|unit test|refactor)\b", re.I)
 
 # ── SKILLS (from the 10 Must-Have AI Skills guide) ─────────────────────
+# Humanizer methodology distilled from blader/humanizer (33.9k⭐, MIT) —
+# Wikipedia's "Signs of AI writing" rules + a draft→audit→final rewrite loop.
+HUMANIZER_SYSTEM = """
+You are a ruthless humanizing editor. Rewrite the text so it reads like a person wrote it. Keep EVERY fact, name, number, and claim from the original; never invent or drop a fact. You may add voice (first person, opinions, asides, humor) where the piece is an essay or opinion, but never add invented facts about the world.
+
+KILL THESE AI TELLS:
+- Puffed-up significance: "stands as a testament", "pivotal", "underscores", "broader movement", "setting the stage", "evolving landscape", "deeply rooted", "key role".
+- Superficial -ing analysis: "highlighting...", "reflecting...", "symbolizing...", "fostering...".
+- Promotional puff: "nestled", "vibrant", "boasts", "must-visit", "rich heritage", "breathtaking".
+- Em/en dashes: ZERO in the final text. Replace with a comma or split into two sentences.
+- Rule-of-three lists and perfectly parallel sentences: break them.
+- AI vocabulary: delve, leverage, elevate, moreover, furthermore, additionally, in conclusion, navigate, robust, seamless, tapestry, landscape, unlock, meticulously, realm, multifaceted, comprehensive.
+- Pretend-depth: "The real question is", "at its core", "fundamentally", "the heart of the matter", "what really matters".
+- Signposting: "Let's dive in", "Here's what you need to know", "In this article, we will", "without further ado".
+- Curly quotes to straight quotes.
+- Aphorisms: "X is the language of Y", "X is not a tool but a mirror".
+- Staccato drama: several one-line fragments stacked for effect.
+- Chatbot filler: "I hope this helps", "let me know if you'd like", "Certainly!", "Absolutely!".
+- Knowledge-cutoff disclaimers: "As of my last update", "While specific details are limited".
+- Hyphenated compounds in predicate position: "the report is high-quality" → "high quality".
+
+WRITE LIKE A HUMAN (these matter most):
+- Burstiness: VARY sentence length hard — a three-word zinger, then a long flowing sentence, then a medium one. Uniform mid-length sentences are the #1 detector signal.
+- Use contractions, the occasional sentence fragment, and uneven paragraph lengths.
+- Prefer plain surprising words: concrete nouns and simple verbs (is, has, took, said) over abstractions.
+- Keep a specific voice with attitude for essays: asides, hedging ("I think", "kind of"), self-correction, mixed feelings. Do not make every sentence land like a quotable closer.
+- After a heading, go straight to the point; never pad with a one-line restatement of the heading.
+
+Output ONLY the rewritten text, no preamble, no notes, no closing remark.
+"""
+
 SKILL_PROMPTS = {
     "design": ("You are a senior UI/UX designer with a huge design database (50+ UI styles, 97 palettes, "
                "57 font pairings). For the brief: (1) output a ```json``` design system: aesthetic direction, "
@@ -785,12 +816,7 @@ SKILL_PROMPTS = {
                "3-5 named UI styles, style notes; (2) then output a complete single-file HTML page (embedded CSS, "
                "no frameworks) using it. Make it distinctive and NOT AI-looking: no generic purple gradients, no "
                "default system font stack, bold typography. Web + mobile responsive."),
-    "humanize": ("You are a humanizer that removes every trace of AI-generated writing. Detect and fix these 24 "
-                 "patterns: inflated symbolism, promotional language, superficial analyses, vague attributions, "
-                 "em-dash overuse, rule-of-three structures, AI vocabulary words ('delve', 'leverage', 'elevate', "
-                 "'moreover', 'furthermore', 'navigate', 'robust', 'seamless'), excessive conjunctive phrases, "
-                 "overly balanced sentences, generic openers, and more. Rewrite the user's text to sound natural "
-                 "and human while preserving the original meaning. Return ONLY the rewritten text."),
+    "humanize": HUMANIZER_SYSTEM,
     "seo": ("You are a top SEO consultant. For the target, produce a practical action plan: primary + secondary "
             "keywords, an SEO title tag and meta description (under 160 chars), H1/H2 outline, internal-linking "
             "tips, schema markup to add, technical + local fixes, backlink strategy, and GEO/AEO tips so AI "
@@ -862,25 +888,60 @@ def pick_skills(msg):
         active.append("analyze")
     return active
 
+def _strip_preamble(t):
+    t = re.sub(r"^(?:here (?:is|are|'s) .*?:|final (?:rewrite|version):|rewritten text:|output:)", "", t.strip(), flags=re.I)
+    return t.strip().strip('"')
+
+def _deterministic_humanize(t):
+    """Mechanical cleanups that should hold no matter what the model does."""
+    t = (t or "").replace("“", '"').replace("”", '"') \
+                .replace("‘", "'").replace("’", "'")
+    # Zero em/en dashes (skip numeric ranges like "10–20")
+    t = re.sub(r"\s*(?<!\d)[—–](?!\d)\s*", ", ", t)
+    t = re.sub(r",\s*,", ",", t)
+    t = re.sub(r"\s{2,}", " ", t)
+    return t.strip()
+
 def humanize_text(text):
-    """Dedicated rewrite pass for long prose. Re-writes finished text so it reads
-    as a specific human voice instead of a language model's default voice.
-    Returns the rewritten text, or None if the rewrite didn't succeed."""
+    """Blader-style draft → audit → final rewrite loop for long prose.
+    Returns the final text, or None if any step failed."""
     if not text or len(text.strip()) < 200:
         return None
-    out = ask([{"role": "user", "content": text[:6000]}],
-              system=(SKILL_PROMPTS["humanize"] +
-                      "\n\nStrict rules: write in the first person with ONE specific voice; break every "
-                      "rule-of-three; alternate very short and long sentences; use contractions and the odd "
-                      "sentence fragment; never use an em dash; no bullet lists inside prose; keep paragraphs "
-                      "uneven; replace every 'furthermore/moreover/additionally/in conclusion' with a plain "
-                      "transition or nothing; ground one idea in a concrete personal example. "
-                      "Output ONLY the rewritten text — no preamble, no note."),
-              max_tokens=2400, temperature=0.9)
-    out = (out or "").strip()
-    if len(out) < 100 or out.lower() in ("ai error, sir.", ""):
+    src = text[:6000]
+
+    # 1) DRAFT — full methodology rewrite (high variance)
+    draft = ask([{"role": "user", "content": src}], system=HUMANIZER_SYSTEM,
+                max_tokens=2400, temperature=0.9)
+    draft = _strip_preamble(draft or "")
+    if len(draft) < 100 or draft.lower() == "ai error, sir.":
         return None
-    return out
+
+    # 2) AUDIT — cheap self-critique of the draft
+    audit = ask([{"role": "user",
+                  "content": f"Rewrite:\n{draft[:4000]}\n\nList, in under 6 short bullets: "
+                             "(a) what still reads as AI-generated, naming the exact tell; "
+                             "(b) any burstiness problem — are sentence lengths too uniform? "
+                             "(c) any em/en dashes remaining. If it already reads human, reply exactly: clean"}],
+                system="You are a strict AI-detection auditor (like GPTZero's criteria).",
+                max_tokens=300, temperature=0.2)
+    audit = (audit or "").strip()
+
+    # 3) FINAL — fix whatever the audit flagged
+    if audit.lower().strip() == "clean":
+        final = draft
+    else:
+        final = ask([{"role": "user",
+                      "content": f"Original:\n{src}\n\nMy draft, and the audit's complaints to fix:\n"
+                                 f"DRAFT:\n{draft[:4000]}\n\nAUDIT:\n{audit[:800]}\n\n"
+                                 f"Produce the FINAL rewrite fixing every audit item. Preserve all facts. "
+                                 f"Zero em/en dashes. Vary sentence length hard. Output only the final text."}],
+                    system=HUMANIZER_SYSTEM, max_tokens=2400, temperature=0.9)
+        final = _strip_preamble(final or "")
+
+    final = _deterministic_humanize(final)
+    if len(final) < 100 or final.lower() == "ai error, sir.":
+        return None
+    return final
     """Compute quick statistics from numbers found in the text. Returns str or None."""
     nums = [float(m.group()) for m in re.finditer(r"-?\d+(?:\.\d+)?", text)]
     if len(nums) < 3:
