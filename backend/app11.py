@@ -715,7 +715,8 @@ def plan_desktop(command):
     return _clean_desktop_steps(obj)
 
 def plan_code(command):
-    obj = ask_json("You are Jarvis coding for Mohamed. " + CODE_ACTIONS, f"Task: {command}")
+    obj = ask_json("You are Jarvis coding for Mohamed. " + CODE_ACTIONS + "\n" +
+                   SKILL_GUIDELINES["security"] + " " + SKILL_GUIDELINES["tdd"], f"Task: {command}")
     return _clean_desktop_steps(obj)
 
 def enqueue_desktop(command, steps, label="desktop", chain=None):
@@ -742,7 +743,7 @@ def decide_code(command, log):
     system = ("You are Jarvis completing a coding task for Mohamed. Given the goal, the steps run and their "
               "outputs, decide whether the task is done. Done → {\"done\": true, \"answer\": \"<what you built and "
               "how to run it>\"}. Otherwise → {\"done\": false, \"steps\": [1-5 actions]} to fix errors and continue. "
-              + CODE_ACTIONS)
+              + CODE_ACTIONS + "\n" + SKILL_GUIDELINES["security"] + " " + SKILL_GUIDELINES["tdd"])
     user = f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-12:], indent=1)[:4000]}"
     obj = ask_json(system, user)
     if not obj:
@@ -812,7 +813,51 @@ SKILL_PROMPTS = {
                 "actionable insights. Be concrete and plain-spoken."),
 }
 
-def analyze_data(text):
+# ── AUTO-SKILLS ──────────────────────────────────────────────────────
+# Compact, always-on guidance the chat model folds into EVERY reply.
+# Relevant skills are auto-activated per message (never need to be asked).
+SKILL_GUIDELINES = {
+    "humanize": ("Write in a natural, human voice. Strip AI fingerprints: avoid 'delve', 'leverage', 'elevate', "
+                 "'moreover', 'furthermore', em-dash overuse, rule-of-three lists, and generic openers. Sound like "
+                 "a sharp, warm friend answering — not a marketing template."),
+    "design": ("Anything visual you produce (web pages, UI, dashboards, logos): pick a distinctive aesthetic with "
+               "a real color palette, font pairing, and spacing scale. Avoid generic purple gradients and default "
+               "system font stacks."),
+    "seo": ("Content meant to rank (essays, articles, blog posts, web copy): give it a clear title, H1/H2 outline, "
+            "naturally-targeted keywords, a ~160-char meta description when relevant, and write so AI search "
+            "engines would cite it."),
+    "marketing": ("Business/marketing writing (copy, emails, landing pages, offers): be persuasive and specific — "
+                  "a strong headline, concrete value props, and a clear call to action."),
+    "security": ("Any code you write or show: keep OWASP basics — validate inputs, avoid injection, never hardcode "
+                 "secrets, don't expose data. If the user's code has a security problem, point it out and fix it."),
+    "tdd": ("When writing or fixing code: think tests-first. Show how you'd verify it works, and for bugs, frame "
+            "the failing test before the fix."),
+    "analyze": ("For numbers/data questions: interpret the actual values — mean/median, trend, outliers — and give "
+                "concrete, actionable insights, not generic statements."),
+}
+
+def pick_skills(msg):
+    """Auto-activate the skills relevant to a chat message (humanize is always on)."""
+    m = (msg or "").lower()
+    active = ["humanize"]
+    if re.search(r"\b(design|website|landing page|web page|ui/ux|\bui\b|\bux\b|portfolio|dashboard|logo|make me a site)\b", m) \
+       or re.search(r"(html|css|tailwind|react)", m):
+        active.append("design")
+    if re.search(r"\b(seo|essay|article|blog post|rank|keyword|meta description)\b", m) \
+       or re.search(r"(write me an essay|write an essay|content for my site|for my website|for my business website)", m):
+        active.append("seo")
+    if re.search(r"\b(marketing|email|emails|campaign|sales copy|ad copy|funnel|pitch|convert|caption|brochure|newsletter)\b", m) \
+       or re.search(r"(landing page|instagram post|facebook ad)", m):
+        active.append("marketing")
+    if re.search(r"\b(secur|vulnerab|owasp|exploit|injection|malware|threat|is my code safe|hack)\b", m):
+        active.append("security")
+    if re.search(r"\b(tdd|tests?|unittest|pytest|failing test|bug in)\b", m) \
+       or re.search(r"(write tests|test-driven)", m):
+        active.append("tdd")
+    if re.search(r"\b(analy|dataset|data|stats|trend|average|mean|median|outlier|metric)\b", m) \
+       or re.search(r"(numbers|how many|count of)", m):
+        active.append("analyze")
+    return active
     """Compute quick statistics from numbers found in the text. Returns str or None."""
     nums = [float(m.group()) for m in re.finditer(r"-?\d+(?:\.\d+)?", text)]
     if len(nums) < 3:
@@ -964,6 +1009,11 @@ def chat():
         if ctx:
             system = CHAT_SYSTEM + ("\n\nFresh web context to ground your answer (use it if relevant, cite "
                                     "sources with their URLs):\n" + ctx[:2500])
+    if not is_action:  # auto-skills shape the reply (action turns just emit a dispatch tag)
+        active = pick_skills(msg)
+        if active:
+            system += ("\n\nSkills you MUST apply to this reply: " + ", ".join(active) + "\n" +
+                       "\n".join(SKILL_GUIDELINES[k] for k in active))
     reply = ask(hist, system=system, max_tokens=1200)
 
     # Dispatch to browser / desktop / code — the model's tag wins, then a
