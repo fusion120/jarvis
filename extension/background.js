@@ -126,8 +126,10 @@ async function execStep(step) {
             const el = document.querySelector(sel);
             if (!el) return false;
             el.focus();
-            el.value = val;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+              || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+            if (setter) setter.call(el, val); else el.value = val;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
           },
@@ -137,7 +139,7 @@ async function execStep(step) {
       }
 
       case 'type_label': {
-        // Find an input/textarea by its label text
+        // Find an input/textarea by its label text, type, and submit
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: (labelText, val) => {
@@ -151,8 +153,10 @@ async function execStep(step) {
             if (!el) el = document.querySelector(`[aria-label*="${labelText}" i]`);
             if (!el) return false;
             el.focus();
-            el.value = val;
-            el.dispatchEvent(new Event('input', { bubbles: true }));
+            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+              || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
+            if (setter) setter.call(el, val); else el.value = val;
+            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
             return true;
           },
@@ -162,36 +166,48 @@ async function execStep(step) {
       }
 
       case 'search': {
-        // Type into the site's search box and submit its form (real submit,
-        // more reliable than a synthetic Enter for YouTube/Gmail/etc).
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           func: (query) => {
             const q = (query || '').trim(); if (!q) return null;
             const inputs = [...document.querySelectorAll('input,textarea')]
               .filter(el => el.offsetParent !== null);
-            const pick = inputs.find(el => /search|query|\bq\b/i.test((el.getAttribute('name')||'') + ' ' + (el.placeholder||'') + ' ' + (el.getAttribute('id')||'')))
+            const pick = inputs.find(el => /search|query|\bq\b/i.test(
+                    (el.getAttribute('name')||'') + ' ' + (el.placeholder||'') + ' ' + (el.getAttribute('id')||'')))
               || inputs.find(el => el.type === 'search')
               || inputs[0];
             if (!pick) return 'no search input found';
             pick.focus();
+            // Set value using native setter + InputEvent (works for React/controlled inputs)
             const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
               || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
             if (setter) setter.call(pick, q); else pick.value = q;
-            pick.dispatchEvent(new Event('input', { bubbles: true }));
+            pick.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: q }));
             pick.dispatchEvent(new Event('change', { bubbles: true }));
+            // Try submitting: form → button → keydown(Enter) sequentially
             const form = pick.closest('form');
-            if (form && typeof form.requestSubmit === 'function') { form.requestSubmit(); return 'searched (form submit): ' + q; }
-            const btn = (form && form.querySelector('[type=submit],button'))
-              || document.querySelector('button[aria-label*="search" i],button[aria-label*="Search" i]');
-            if (btn) { btn.click(); return 'searched (button): ' + q; }
-            pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-            pick.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', bubbles: true }));
-            return 'searched (enter): ' + q;
+            if (form) {
+              // Try form.requestSubmit (real submit, triggers page nav)
+              if (typeof form.requestSubmit === 'function') {
+                try { form.requestSubmit(); return 'searched (form submit): ' + q; } catch {}
+              }
+              // Try clicking the submit button inside the form
+              const btn = form.querySelector('[type=submit],button[type=submit],input[type=submit]');
+              if (btn) { btn.click(); return 'searched (button): ' + q; }
+            }
+            // Last resort: find any nearby search button and click it
+            const anyBtn = document.querySelector('button[aria-label*="search" i],button[aria-label*="Search" i],input[aria-label*="search" i],.search-submit,[type=submit]');
+            if (anyBtn) { anyBtn.click(); return 'searched (fallback button): ' + q; }
+            // If nothing works, at least the text was typed in — the user can press Enter
+            pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            pick.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            pick.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            return 'typed (enter key): ' + q;
           },
           args: [step.query]
         });
-        return { ok: !!r.result, done: r.result || 'search failed' };
+        const ok = r?.result && !r.result.startsWith('search failed');
+        return { ok, done: r?.result || 'search failed' };
       }
 
       case 'run_js': {

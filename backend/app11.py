@@ -448,7 +448,9 @@ Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"save_session"} — save all open tabs for later
 - {"action":"restore_session"} — reopen the last saved session
 - {"action":"save_tab","label":"note"} — save the current tab's text to the research log
-- {"action":"collect_tabs","label":"note"} — scrape ALL open tabs into the research log (polite bulk collector)"""
+- {"action":"collect_tabs","label":"note"} — scrape ALL open tabs into the research log (polite bulk collector)
+
+CRITICAL: For any task that asks you to FIND, SEARCH, or LOOK FOR something on a site, your FIRST batch of steps MUST always start with {"action":"search","query":"..."} typing the user's topic into the site's search box, followed by {"action":"wait","ms":1500} then {"action":"read_page"}. You MUST type into the search box — never just navigate to a homepage and read it without typing a query first."""
 
 def _json_or_none(text):
     """Try to parse `text` as JSON; also salvage a JSON object out of prose."""
