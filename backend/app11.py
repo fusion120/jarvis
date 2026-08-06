@@ -817,9 +817,12 @@ SKILL_PROMPTS = {
 # Compact, always-on guidance the chat model folds into EVERY reply.
 # Relevant skills are auto-activated per message (never need to be asked).
 SKILL_GUIDELINES = {
-    "humanize": ("Write in a natural, human voice. Strip AI fingerprints: avoid 'delve', 'leverage', 'elevate', "
-                 "'moreover', 'furthermore', em-dash overuse, rule-of-three lists, and generic openers. Sound like "
-                 "a sharp, warm friend answering — not a marketing template."),
+    "humanize": ("Write in a natural, human voice and erase AI fingerprints. Concrete rules: use contractions; mix "
+                 "very short punchy sentences with longer ones; never write rule-of-three lists; avoid 'delve', "
+                 "'leverage', 'elevate', 'moreover', 'furthermore', 'additionally', 'in conclusion', 'navigate', "
+                 "'robust', 'seamless', 'landscape', 'tapestry', 'unlock'; no em dashes (—); no perfectly parallel "
+                 "openings; add one concrete, personal detail or example; keep paragraphs uneven in length. Sound "
+                 "like a sharp, warm friend — not a template."),
     "design": ("Anything visual you produce (web pages, UI, dashboards, logos): pick a distinctive aesthetic with "
                "a real color palette, font pairing, and spacing scale. Avoid generic purple gradients and default "
                "system font stacks."),
@@ -858,6 +861,26 @@ def pick_skills(msg):
        or re.search(r"(numbers|how many|count of)", m):
         active.append("analyze")
     return active
+
+def humanize_text(text):
+    """Dedicated rewrite pass for long prose. Re-writes finished text so it reads
+    as a specific human voice instead of a language model's default voice.
+    Returns the rewritten text, or None if the rewrite didn't succeed."""
+    if not text or len(text.strip()) < 200:
+        return None
+    out = ask([{"role": "user", "content": text[:6000]}],
+              system=(SKILL_PROMPTS["humanize"] +
+                      "\n\nStrict rules: write in the first person with ONE specific voice; break every "
+                      "rule-of-three; alternate very short and long sentences; use contractions and the odd "
+                      "sentence fragment; never use an em dash; no bullet lists inside prose; keep paragraphs "
+                      "uneven; replace every 'furthermore/moreover/additionally/in conclusion' with a plain "
+                      "transition or nothing; ground one idea in a concrete personal example. "
+                      "Output ONLY the rewritten text — no preamble, no note."),
+              max_tokens=2400, temperature=0.9)
+    out = (out or "").strip()
+    if len(out) < 100 or out.lower() in ("ai error, sir.", ""):
+        return None
+    return out
     """Compute quick statistics from numbers found in the text. Returns str or None."""
     nums = [float(m.group()) for m in re.finditer(r"-?\d+(?:\.\d+)?", text)]
     if len(nums) < 3:
@@ -1083,6 +1106,12 @@ def chat():
                 else:
                     code_iters[ctask["chain"]] = CODE_MAX_ITERS
                     extra = f"\n\n💻 Coding: I've queued it — writing and running in your workspace, Sir."
+    # Long-form prose (essays, articles) gets a dedicated humanize rewrite pass
+    # so it reads as a human voice instead of language-model default.
+    if not cmd and len(reply) >= 500 and "```" not in reply:
+        h = humanize_text(reply)
+        if h:
+            reply = h
     return jsonify({"response": reply + extra})
 
 @app.route("/api/math/solve", methods=["POST"])
