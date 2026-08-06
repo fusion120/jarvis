@@ -363,7 +363,7 @@ KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
                  "save_session","restore_session","save_tab","collect_tabs"}
 STEP_FIELDS   = {"action","url","text","selector","value","label","code","x","y","ms","key","query","tab","keyword","name"}
 BROWSER_MAX_STEPS = 8
-BROWSER_MAX_ITERS = 12          # guard against infinite agentic loops
+BROWSER_MAX_ITERS = 20          # guard against infinite agentic loops (multi-page searches need room)
 
 browser_queue     = []          # pending tasks
 browser_running   = {}          # task_id → task being executed
@@ -433,6 +433,8 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"run_js","code":"return document.title"}
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
 There is NO "play" action. To play a video/song: open the site, read_page, then {"action":"click_text","text":"<a video title>"} to start it. For "a random video/song", click the first video/song title you see on the page. For "a video about X", search for X first, then click the top result.
+{"action":"read_page"} returns the page's visible text (up to ~12k chars) AND up to 80 links with their titles — scan those links to choose what to click.
+TO FIND something the user asked for, keep going until you actually see it: search the site, read_page, and scan the links it returns. If the answer is not on the page yet, scroll down ({"action":"scroll","y":800} triggers lazy-loaded content on feeds and infinite-scroll sites), read_page again, and click "Next" / "Load more" / page numbers to move through result pages. You may batch several commands at once: search → wait → read_page → scroll → click. Do NOT give up after one page — work through several pages or refine the search before declaring failure.
 When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests.
 Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"list_tabs"} — list all open tabs
@@ -556,10 +558,16 @@ def decide_next(command, log, page):
               "{\"done\": true, \"answer\": \"<concise final answer for Mohamed>\"} when the goal is achieved "
               "or cannot progress — the answer should synthesize what he asked for (a summary, key details, "
               "or example drafts). Otherwise return {\"done\": false, \"steps\": [...]} (1-6 steps). "
+              "Do NOT declare done while the goal is still unfound: if the page text or links don't contain "
+              "the answer yet, keep issuing steps (search, scroll, read_page, click \"Next\"/\"Load more\") "
+              "until you actually have it. "
               + ACTIONS_DOC)
-    user = (f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-10:], indent=1)[:4000]}\n\n"
+    links = "\n".join(f"- {l.get('text','')} -> {l.get('href','')}"
+                      for l in (page.get('links') or [])[:60])
+    user = (f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-14:], indent=1)[:9000]}\n\n"
             f"Current page:\nURL: {page.get('url')}\nTitle: {page.get('title')}\n"
-            f"Text: {page.get('text','')[:2000]}")
+            f"Text: {page.get('text','')[:6000]}\n"
+            f"Page links (text -> href):\n{links or '(none captured)'}")
     obj = ask_json(system, user)
     if not obj:
         return {"done": True, "steps": [], "answer": ""}

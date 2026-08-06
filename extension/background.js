@@ -385,7 +385,11 @@ async function poll() {
             func: () => ({
               url: location.href,
               title: document.title,
-              text: document.body?.innerText?.slice(0, 6000) || ''
+              text: document.body?.innerText?.slice(0, 12000) || '',
+              links: [...document.querySelectorAll('a')]
+                .map(a => ({ text: (a.innerText || a.getAttribute('title') || '').trim(), href: a.href }))
+                .filter(l => l.text && l.href && l.href.startsWith('http'))
+                .slice(0, 60)
             })
           });
           pageData = res.result;
