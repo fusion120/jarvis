@@ -6,3 +6,8 @@ node_modules/
 .env
 desktop.ini
 jarvis1.html
+
+# Desktop agent local config + runtime data (never commit secrets)
+agent/agent_config.json
+agent/agent.log
+backend/data/

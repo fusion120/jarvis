@@ -58,6 +58,17 @@ CHAT_SYSTEM = SYSTEM + ("\n\nYou can also control Mohamed's browser through the 
     "task, e.g. [[BROWSER]]open mail.google.com, read the inbox, summarize the 5 newest messages and draft "
     "replies. Do NOT add that line for pure chat questions.")
 
+CHAT_SYSTEM += ("\n\nYou can ALSO control Mohamed's PC through the Jarvis desktop agent (a program running "
+    "on his Windows machine). When he asks you to DO something on his computer — open an app or file, run a "
+    "command, list/read/find files, take a screenshot, check system/network info, manage the clipboard, "
+    "delete/create files, or anything about printers, USB devices, or displays — do NOT explain how to do it "
+    "yourself. Reply with one short acknowledgment line, then END with exactly one tag line: "
+    "[[DESKTOP]]<short imperative command> (e.g. [[DESKTOP]]open notepad, or [[DESKTOP]]list the files in my "
+    "Downloads folder). When he wants you to BUILD/WRITE/FIX code — 'write me a script to...', 'build a tool "
+    "that...', 'fix this error' — use [[CODE]]<short imperative coding task> instead (e.g. [[CODE]]write a "
+    "python script that renames all files in a folder to lowercase). Never add a tag line for pure chat "
+    "questions, and never add more than one tag line per reply.")
+
 # ── SHARED STATE ──────────────────────────────────────────────────────
 pending          = {}   # approval_id → {type, data}
 assign_timers    = {}   # assignment_id → timer info
@@ -365,6 +376,47 @@ browser_answers   = []          # recent finished results {command, answer, ts}
 browser_sessions  = []          # saved tab sessions [{urls, ts}] (latest wins)
 research_log      = []          # cross-window saves {id,title,url,text,label,ts}
 
+# ── DESKTOP AGENT STATE (local PC control) ────────────────────────────
+# The desktop agent (agent/jarvis_agent.py) polls /api/desktop/poll and
+# executes steps on Mohamed's Windows PC. Every step is classified
+# safe / approve / block; risky tasks pause for approval before they are
+# ever handed to the agent. All state here is in-memory like the browser.
+desktop_queue     = []          # approved/safe tasks waiting for the PC agent
+desktop_running   = {}          # task_id → task being executed
+desktop_results   = {}          # task_id → last result posted by the agent
+desktop_pending   = []          # tasks awaiting Mohamed's approval {id, command, steps, verdicts}
+desktop_delivered = set()       # task ids already handed out (runs-once guard)
+desktop_last_seen = 0.0         # epoch seconds of the agent's last poll
+desktop_workspace = ""          # agent's workspace, reported via X-Jarvis-Workspace header
+desktop_answers   = []          # recent finished results {command, answer, ts}
+code_iters        = {}          # coding task_id → iterations left
+
+# ── PERSISTENCE (survives Render restarts; /api/data/export is the backup) ──
+PERSIST_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+PERSIST_FILE = os.path.join(PERSIST_DIR, "store.json")
+
+def persist():
+    """Snapshot in-memory stores to disk (called after each mutation)."""
+    try:
+        os.makedirs(PERSIST_DIR, exist_ok=True)
+        with open(PERSIST_FILE, "w", encoding="utf-8") as f:
+            json.dump({"research_log": research_log, "memory": memory_store,
+                       "reminders": REMINDERS}, f, ensure_ascii=False)
+    except Exception as e:
+        print("persist err", e)
+
+def load_persist():
+    global research_log, memory_store, REMINDERS
+    try:
+        if os.path.exists(PERSIST_FILE):
+            with open(PERSIST_FILE, "r", encoding="utf-8") as f:
+                d = json.load(f)
+            if isinstance(d.get("research_log"), list): research_log = d["research_log"]
+            if isinstance(d.get("memory"), list):       memory_store = d["memory"]
+            if isinstance(d.get("reminders"), list):    REMINDERS = d["reminders"]
+    except Exception as e:
+        print("load persist err", e)
+
 ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed step actions:
 - {"action":"navigate","url":"https://..."}
 - {"action":"new_tab","url":"https://..."}
@@ -506,11 +558,197 @@ def enqueue_browser(command, steps, chain=None):
     browser_queue.append(task)
     return task
 
+# ── DESKTOP AGENT (local PC control) ───────────────────────────────────
+# Safety model: every step is classified. `safe` steps run automatically;
+# `approve` steps pause for Mohamed's Yes on the dashboard/Telegram before
+# the task is ever handed to the agent; `block` steps are rejected outright.
+DESKTOP_SAFE_ACTIONS = {
+    "open_app", "list_files", "read_file", "find_file", "get_system_info",
+    "get_network_info", "network_scan", "screenshot", "list_windows",
+    "list_printers", "list_usb", "list_displays", "get_clipboard",
+}
+DESKTOP_APPROVE_ACTIONS = {
+    "set_clipboard", "write_file", "edit_file", "delete_file", "delete_folder",
+    "execute_code", "install_software", "shutdown", "restart", "send_keys",
+    "print_document",
+}
+# Read-only / dev commands the agent may run without approval (code runs in
+# the workspace cwd, which is the sandbox). Everything else needs a Yes.
+# Note: installing things (pip install / npm install) is deliberately NOT
+# here — those go through the approval gate like any install.
+DESKTOP_SAFE_CMDS = (
+    "dir", "ls", "cd", "type", "echo", "ipconfig", "netstat", "ping",
+    "tracert", "pathping", "systeminfo", "tasklist", "whoami", "hostname",
+    "ver", "getmac", "arp", "get-date", "get-childitem", "get-content",
+    "python", "py", "node", "npm run", "npm test", "npm start", "npm ci",
+    "pip list", "pip freeze", "pip show", "git", "git status", "cls",
+)
+# Command patterns that are never allowed — even with approval. (shutdown /
+# restart are NOT here: they are approval-gated so Mohamed can still ask for them.)
+DESKTOP_BLOCKED_RE = re.compile(
+    r"\b(rm\s+-rf|format\s+[a-z]:|diskpart|cipher\s+/w\b|reg\s+delete|"
+    r"taskkill\s+/f\b|"
+    r"remove-item\s+-recurse|del\s+/[sfq]\b|rd\s+/[sfq]\b|sc\s+delete\b|"
+    r"bcdedit|bootrec|fsutil|vol\s+[a-z]:|convert\s+[a-z]:|"
+    r"clear-content|takeown\s+/f|icacls\s+.*\s+/grant|attrib\s+-[rsa])", re.I)
+DESKTOP_SYSTEM_DIRS = ("C:\\Windows", "C:\\Program Files",
+                       "C:\\Program Files (x86)", "C:\\ProgramData")
+
+def _norm_path(p):
+    p = (p or "").strip()
+    try:
+        return os.path.abspath(os.path.normpath(p))
+    except Exception:
+        return p
+
+def _in_workspace(path):
+    if not desktop_workspace or not path:
+        return False
+    wp = _norm_path(desktop_workspace).lower()
+    pp = _norm_path(path).lower()
+    return pp == wp or pp.startswith(wp + os.sep)
+
+def classify_desktop_step(step):
+    """Return 'safe', 'approve', or 'block' for one desktop step."""
+    act = (step or {}).get("action", "")
+    if act == "run_command":
+        low = str((step or {}).get("command", "") or "").strip().lower()
+        if not low:
+            return "block"
+        if DESKTOP_BLOCKED_RE.search(low):
+            return "block"
+        if any(low == c or low.startswith(c + " ") or low.startswith(c + "/")
+               for c in DESKTOP_SAFE_CMDS):
+            return "safe"
+        return "approve"
+    if act == "execute_code":
+        code = str((step or {}).get("code", "") or "")
+        if DESKTOP_BLOCKED_RE.search(code.lower()):
+            return "block"
+        return "approve"
+    if act in ("write_file", "edit_file") and _in_workspace((step or {}).get("path")):
+        return "safe"                       # sandboxed to the workspace
+    if act == "delete_file":
+        p = _norm_path((step or {}).get("path", ""))
+        if any(p.lower().startswith(d.lower() + os.sep) or p.lower() == d.lower()
+               for d in DESKTOP_SYSTEM_DIRS):
+            return "block"                  # never delete system folders
+        return "approve"
+    if act == "delete_folder":
+        return "approve"
+    if act in DESKTOP_SAFE_ACTIONS:
+        return "safe"
+    return "approve"                        # unknown actions get a human look
+
+DESKTOP_ACTIONS = """Return a JSON object with a "steps" array (1-8 steps) of actions Mohamed's local PC agent can run on his Windows computer. Allowed actions:
+- {"action":"open_app","app":"notepad"} — launch an app by name or full path (notepad, calc, chrome, code, or C:\\path\\app.exe)
+- {"action":"list_files","path":"C:\\Users\\elsay"} — list a directory
+- {"action":"read_file","path":"C:\\...\\file.txt"} — print a text file's contents
+- {"action":"find_file","name":"quarterly","path":"C:\\Users\\elsay"} — search a folder by file name
+- {"action":"get_system_info"} — OS, CPU, RAM, disk usage
+- {"action":"get_network_info"} — ipconfig / active connections / ping a host
+- {"action":"network_scan"} — list devices on the local network
+- {"action":"screenshot"} — capture the screen
+- {"action":"list_windows"} — open application windows
+- {"action":"list_printers"} / {"action":"list_usb"} / {"action":"list_displays"} — hardware inventory
+- {"action":"get_clipboard"} / {"action":"set_clipboard","text":"..."}
+- {"action":"write_file","path":"...","content":"..."} — create/replace a file (use the workspace for code)
+- {"action":"edit_file","path":"...","old":"...","new":"..."} — replace text in a file
+- {"action":"delete_file","path":"..."} / {"action":"delete_folder","path":"..."}
+- {"action":"run_command","command":"dir C:\\"} — run a shell command (code runs in the workspace)
+- {"action":"execute_code","language":"python","code":"print('hi')"} — run code
+- {"action":"install_software","name":"7zip"} / {"action":"shutdown"} / {"action":"restart"}
+- {"action":"send_keys","keys":"Ctrl+S"} / {"action":"print_document","path":"..."}
+Mohamed's coding workspace is at the path the agent reports. Use it for scripts and projects. Prefer read-only/info actions for questions."""
+
+CODE_ACTIONS = """You are Jarvis completing a coding task for Mohamed inside his workspace folder. Return JSON:
+- {"done": true, "answer": "<what you built and how to run it>"} when the task is complete.
+- Otherwise {"steps": [1-5 actions]} from this list (all paths absolute, inside the workspace):
+  {"action":"list_files","path":"<workspace>"}
+  {"action":"read_file","path":"C:\\...\\file.py"}
+  {"action":"write_file","path":"C:\\...\\file.py","content":"<full file>"}
+  {"action":"edit_file","path":"...","old":"...","new":"..."}
+  {"action":"run_command","command":"cd /d <workspace> && python script.py"}
+  {"action":"wait","ms":500}
+Write real, working code. After writing, run it and iterate on any errors until it works. Keep everything inside the workspace."""
+
+CODE_MAX_ITERS = 8
+
+def _clean_desktop_steps(obj):
+    steps = []
+    for s in ((obj or {}).get("steps") or []):
+        if isinstance(s, dict) and s.get("action"):
+            steps.append({k: v for k, v in s.items() if v is not None})
+            if len(steps) >= 8:
+                break
+    return steps
+
+def plan_desktop(command):
+    obj = ask_json("You are Jarvis planning a task for Mohamed's PC (Windows). " + DESKTOP_ACTIONS,
+                   f"Task: {command}")
+    return _clean_desktop_steps(obj)
+
+def plan_code(command):
+    obj = ask_json("You are Jarvis coding for Mohamed. " + CODE_ACTIONS, f"Task: {command}")
+    return _clean_desktop_steps(obj)
+
+def enqueue_desktop(command, steps, label="desktop", chain=None):
+    """Queue a task for the desktop agent. Risky steps hold it for approval.
+    `chain` groups coding re-plans so the iteration cap is shared across them."""
+    verdicts = [classify_desktop_step(s) for s in steps]
+    task = {"id": str(uuid.uuid4())[:8], "command": command, "steps": steps,
+            "verdicts": verdicts, "label": label,
+            "chain": chain or str(uuid.uuid4())[:8], "ts": time.time()}
+    if any(v == "block" for v in verdicts):
+        task["status"] = "blocked"
+        task["reason"] = "it contained a command on the always-blocked list"
+        return task
+    if any(v == "approve" for v in verdicts):
+        task["status"] = "pending"
+        desktop_pending.append(task)
+        return task
+    task["status"] = "queued"
+    desktop_queue.append(task)
+    return task
+
+def decide_code(command, log):
+    """Given coding steps + outputs so far, decide done or next steps."""
+    system = ("You are Jarvis completing a coding task for Mohamed. Given the goal, the steps run and their "
+              "outputs, decide whether the task is done. Done → {\"done\": true, \"answer\": \"<what you built and "
+              "how to run it>\"}. Otherwise → {\"done\": false, \"steps\": [1-5 actions]} to fix errors and continue. "
+              + CODE_ACTIONS)
+    user = f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-12:], indent=1)[:4000]}"
+    obj = ask_json(system, user)
+    if not obj:
+        return {"done": True, "answer": ""}
+    if obj.get("done"):
+        return {"done": True, "answer": (obj.get("answer") or "").strip()}
+    return {"done": False, "steps": _clean_desktop_steps(obj)}
+
 # Fallback intent detection: if the model didn't emit [[BROWSER]], still
 # dispatch when the user's message is clearly a browser action.
 BROWSER_RE = re.compile(
     r"\b(open|go to|navigate|browse|visit|search|look up|google|scroll|click|type in|"
     r"open on|go on|find on|search on|scrape|collect)\b", re.I)
+
+# Desktop intent (PC actions the browser can't do). Checked BEFORE the
+# browser fallback so "open notepad" → desktop, "open youtube" → browser.
+DESKTOP_RE = re.compile(
+    r"\b(open (an? |the )?(app|application|program|file|folder|document|notepad|calculator|paint|"
+    r"chrome|word|excel|terminal|cmd|powershell|vs code)|launch (an? |the )?(app|program)|"
+    r"run (a |the )?(command|script|program)|(list|show|see) (my )?(files|folders|apps|windows|"
+    r"printers|usb|displays|devices)|read (a |the )?(file|folder)|find (a |the |my )?(file|folder)|"
+    r"screenshot|system info|system information|network info|delete (a |the )?(file|folder)|"
+    r"create (a |the )?(file|folder)|write (a |the )?file|clipboard|install (a |the )?(app|program)|"
+    r"shutdown|restart (the )?pc|print (a |this )?file|what's on (my |the )?(desktop|screen))\b", re.I)
+
+# Coding intent — "write/build/make/fix" code in the workspace.
+CODE_RE = re.compile(
+    r"\b(write (me |a |the )?(python|node|javascript|typescript|script|code|program|function|tool)|"
+    r"build (me |a |the )?(script|program|tool|app|bot|api)|create (a |the )?(python|script|program|tool)|"
+    r"make (me |a )?(script|python|program|tool|bot)|code (me |this |a )?|"
+    r"fix (the |this )?(code|bug|script|error|issue)|debug (this |the )?(code|script)|"
+    r"write tests (for|to)|unit test|refactor)\b", re.I)
 
 # ── SKILLS (from the 10 Must-Have AI Skills guide) ─────────────────────
 SKILL_PROMPTS = {
@@ -616,9 +854,11 @@ def api_memory():
             return jsonify({"error": "No fact to remember, Sir."}), 400
         memory_store.append({"id": str(uuid.uuid4())[:8], "fact": f[:400], "ts": time.time()})
         del memory_store[100:]
+        persist()
         return jsonify({"ok": True})
     mid = (request.json or {}).get("id", "").strip()
     memory_store[:] = [m for m in memory_store if m["id"] != mid]
+    persist()
     return jsonify({"ok": True})
 
 @app.route("/api/skills/<skill>", methods=["POST"])
@@ -689,35 +929,84 @@ def chat():
     if rm and len(rm.group(1).strip()) < 300:
         memory_store.append({"id": str(uuid.uuid4())[:8], "fact": rm.group(1).strip()[:400], "ts": time.time()})
         del memory_store[100:]
+        persist()
         return jsonify({"response":"Got it, Sir — I'll remember that."})
     system = CHAT_SYSTEM
-    if not BROWSER_RE.search(msg) and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
+    is_action = bool(BROWSER_RE.search(msg) or DESKTOP_RE.search(msg) or CODE_RE.search(msg))
+    if not is_action and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
         ctx = search_web(msg)
         if ctx:
             system = CHAT_SYSTEM + ("\n\nFresh web context to ground your answer (use it if relevant, cite "
                                     "sources with their URLs):\n" + ctx[:2500])
     reply = ask(hist, system=system, max_tokens=1200)
 
-    # Dispatch to the browser when the model tagged it, OR when the user's
-    # request is clearly a browser action and the model just gave text.
+    # Dispatch to browser / desktop / code — the model's tag wins, then a
+    # targeted intent fallback for plain-text replies.
     extra = ""
-    m = re.search(r"\[\[BROWSER\]\]\s*([^\[]*)", reply)
     cmd = None
+    m = re.search(r"\[\[BROWSER\]\]\s*([^\[]*)", reply)
     if m and m.group(1).strip():
         reply = re.sub(r"\[\[BROWSER\]\][^\[]*", "", reply).rstrip()
-        cmd = m.group(1).strip()
-    elif BROWSER_RE.search(msg):
-        cmd = msg
+        cmd = ("browser", m.group(1).strip())
+    dm = re.search(r"\[\[DESKTOP\]\]\s*([^\[]*)", reply)
+    if dm and dm.group(1).strip():
+        reply = re.sub(r"\[\[DESKTOP\]\][^\[]*", "", reply).rstrip()
+        cmd = ("desktop", dm.group(1).strip())
+    cm = re.search(r"\[\[CODE\]\]\s*([^\[]*)", reply)
+    if cm and cm.group(1).strip():
+        reply = re.sub(r"\[\[CODE\]\][^\[]*", "", reply).rstrip()
+        cmd = ("code", cm.group(1).strip())
+    if not cmd:
+        if DESKTOP_RE.search(msg):
+            cmd = ("desktop", msg)
+        elif CODE_RE.search(msg):
+            cmd = ("code", msg)
+        elif BROWSER_RE.search(msg):
+            cmd = ("browser", msg)
 
     if cmd:
-        planned = plan_steps(cmd)
-        if planned:
-            task = enqueue_browser(cmd, planned)
-            browser_iters[task["chain"]] = BROWSER_MAX_ITERS
-            extra = (f"\n\n🌐 Browser: I've queued \"{cmd}\" ({len(planned)} actions). "
-                     f"Your extension is carrying it out — the result lands on the Browser page and Telegram, Sir.")
-        else:
-            extra = f"\n\n⚠️ Browser: I couldn't plan \"{cmd}\", Sir."
+        kind, target = cmd
+        if kind == "browser":
+            planned = plan_steps(target)
+            if planned:
+                task = enqueue_browser(target, planned)
+                browser_iters[task["chain"]] = BROWSER_MAX_ITERS
+                extra = (f"\n\n🌐 Browser: I've queued \"{target}\" ({len(planned)} actions). "
+                         f"Your extension is carrying it out — the result lands on the Browser page and Telegram, Sir.")
+            else:
+                extra = f"\n\n⚠️ Browser: I couldn't plan \"{target}\", Sir."
+        elif kind == "desktop":
+            dsteps = plan_desktop(target)
+            if not dsteps:
+                extra = f"\n\n⚠️ Desktop: I couldn't plan \"{target}\", Sir."
+            else:
+                dtask = enqueue_desktop(target, dsteps)
+                if dtask["status"] == "blocked":
+                    extra = f"\n\n🚫 Desktop: blocked, Sir — {dtask.get('reason','')}. I won't run destructive commands."
+                elif dtask["status"] == "pending":
+                    n_risky = sum(1 for v in dtask["verdicts"] if v == "approve")
+                    extra = (f"\n\n🖥️ Desktop: {len(dsteps)} actions planned, but {n_risky} need your OK. "
+                             f"Approve on the Desktop page (or Telegram), Sir.")
+                    tg(f"🖥️ <b>DESKTOP APPROVAL NEEDED, SIR</b>\n\n\"{target[:60]}\"\n" +
+                       "\n".join(f"  • {s.get('action')} {s.get('command') or s.get('path') or s.get('app') or ''}"
+                                 for s in dtask["steps"]) +
+                       f"\n\nApprove: <code>APPROVE {dtask['id']}</code>  or  <code>DENY {dtask['id']}</code>")
+                else:
+                    extra = (f"\n\n🖥️ Desktop: I've queued \"{target}\" ({len(dsteps)} actions) — "
+                             f"your PC agent is carrying it out, Sir.")
+        else:  # code
+            csteps = plan_code(target)
+            if not csteps:
+                extra = f"\n\n⚠️ Coding: I couldn't plan \"{target}\", Sir."
+            else:
+                ctask = enqueue_desktop(target, csteps, label="code")
+                if ctask["status"] == "blocked":
+                    extra = f"\n\n🚫 Coding: blocked, Sir — {ctask.get('reason','')}."
+                elif ctask["status"] == "pending":
+                    extra = f"\n\n💻 Coding: planned, but needs your approval first, Sir (check the Desktop page or Telegram)."
+                else:
+                    code_iters[ctask["chain"]] = CODE_MAX_ITERS
+                    extra = f"\n\n💻 Coding: I've queued it — writing and running in your workspace, Sir."
     return jsonify({"response": reply + extra})
 
 @app.route("/api/math/solve", methods=["POST"])
@@ -946,6 +1235,134 @@ def api_browser_session():
         return jsonify({"ok": True, "saved": len(urls)})
     return jsonify({"urls": browser_sessions[0]["urls"] if browser_sessions else []})
 
+# ── DESKTOP ROUTES (local PC agent) ────────────────────────────────────
+@app.route("/api/desktop/status", methods=["GET"])
+@auth
+def desktop_status():
+    recent = []
+    for k, v in list(desktop_results.items())[-6:][::-1]:
+        recent.append({
+            "command": v.get("command", ""), "label": v.get("label", "desktop"),
+            "summary": [s.get("action") + ("" if s.get("ok") else " ✗")
+                        for s in (v.get("steps") or [])[:8]],
+            "ts": v.get("ts", 0),
+        })
+    return jsonify({
+        "connected": bool(desktop_last_seen) and (time.time() - desktop_last_seen) < 60,
+        "workspace": desktop_workspace,
+        "queue": len(desktop_queue), "running": len(desktop_running),
+        "pending": len(desktop_pending), "results": len(desktop_results),
+        "recent": recent,
+    })
+
+@app.route("/api/desktop/poll", methods=["GET"])
+@auth
+def desktop_poll():
+    """The PC agent polls this every 2s. Only approved/safe tasks are handed out."""
+    global desktop_last_seen, desktop_workspace
+    desktop_last_seen = time.time()
+    ws = (request.headers.get("X-Jarvis-Workspace") or "").strip()
+    if ws:
+        desktop_workspace = ws[:300]
+    if not desktop_queue:
+        return jsonify({"task": None})
+    task = desktop_queue.pop(0)
+    if task["id"] in desktop_delivered:        # runs-once guard
+        return jsonify({"task": None})
+    desktop_delivered.add(task["id"])
+    if len(desktop_delivered) > 300:
+        desktop_delivered.clear()
+    desktop_running[task["id"]] = task
+    return jsonify({"task": task, "queue": len(desktop_queue)})
+
+@app.route("/api/desktop/result", methods=["POST"])
+@auth
+def desktop_result():
+    d = request.json or {}
+    tid = d.get("task_id", "")
+    task = desktop_running.pop(tid, None)
+    steps = d.get("steps") or []
+    record = {"task_id": tid, "command": (task or {}).get("command", ""),
+              "label": (task or {}).get("label", "desktop"),
+              "steps": steps, "ts": time.time()}
+    desktop_results[tid] = record
+    if len(desktop_results) > 40:
+        for k in list(desktop_results)[:-40]:
+            desktop_results.pop(k, None)
+
+    errs = [s for s in steps if s.get("error")]
+    # Coding loop: keep re-planning (finishing or fixing errors) until done
+    # or the shared chain iteration cap.
+    if task and task.get("label") == "code":
+        chain = task.get("chain") or task["id"]
+        left = code_iters.get(chain, 0)
+        if left > 0:
+            code_iters[chain] = left - 1
+            verdict = decide_code(task.get("command", ""), steps)
+            if verdict.get("done"):
+                ans = verdict.get("answer") or "Task complete."
+                desktop_answers.insert(0, {"command": task["command"], "answer": ans, "ts": time.time()})
+                del desktop_answers[10:]
+                safe = ans.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                tg(f"💻 <b>CODE RESULT, SIR</b>\n\n{safe[:2000]}")
+            elif verdict.get("steps"):
+                nxt = enqueue_desktop(task["command"], verdict["steps"], label="code", chain=chain)
+                if nxt.get("status") == "queued":
+                    tg(f"💻 Code: {len(verdict['steps'])} more actions for \"{task['command'][:40]}\"")
+                elif nxt.get("status") == "pending":
+                    tg(f"💻 Code needs approval for the next step(s) of \"{task['command'][:40]}\" — Desktop page, Sir.")
+            else:
+                tg(f"🏁 Code task stalled: \"{task['command'][:40]}\" — no next steps, Sir.")
+        else:
+            tg(f"🏁 Code task stopped (iteration limit): \"{task['command'][:40]}\"")
+
+    if errs and (not task or task.get("label") != "code"):
+        names = ", ".join(sorted({str(s.get("action")) for s in errs}))[:200]
+        tg(f"🖥️ Desktop task hit errors ({names}): \"{(task or {}).get('command','')[:50]}\" — check the Desktop page, Sir.")
+    return jsonify({"ok": True})
+
+@app.route("/api/desktop/approvals", methods=["GET"])
+@auth
+def desktop_approvals():
+    return jsonify({"pending": desktop_pending})
+
+@app.route("/api/desktop/approval", methods=["POST"])
+@auth
+def desktop_approval():
+    d = request.json or {}
+    tid = (d.get("task_id") or "").strip()
+    action = (d.get("action") or "deny").lower()
+    for i, t in enumerate(desktop_pending):
+        if t["id"] == tid:
+            desktop_pending.pop(i)
+            if action == "approve":
+                t["status"] = "queued"
+                desktop_queue.append(t)
+                tg(f"✅ Desktop task approved: \"{t['command'][:60]}\"")
+                return jsonify({"ok": True, "queued": True})
+            tg(f"🙅 Desktop task denied: \"{t['command'][:60]}\"")
+            return jsonify({"ok": True, "denied": True})
+    return jsonify({"error": "No such pending task, Sir."}), 404
+
+# ── CODING POWERS (runs through the desktop agent, sandboxed to workspace) ──
+@app.route("/api/code/run", methods=["POST"])
+@auth
+def code_run():
+    d = request.json or {}
+    command = (d.get("command") or "").strip()
+    if not command:
+        return jsonify({"error": "Give me a coding task, Sir."}), 400
+    steps = plan_code(command)
+    if not steps:
+        return jsonify({"error": "Couldn't plan that, Sir."}), 502
+    task = enqueue_desktop(command, steps, label="code")
+    if task.get("status") == "blocked":
+        return jsonify({"ok": True, "blocked": True, "reason": task.get("reason", "")})
+    if task.get("status") == "pending":
+        return jsonify({"ok": True, "needs_approval": True, "task_id": task["id"], "steps": task["steps"]})
+    code_iters[task["chain"]] = CODE_MAX_ITERS
+    return jsonify({"ok": True, "task_id": task["id"], "steps": task["steps"]})
+
 @app.route("/api/research-log", methods=["GET","POST"])
 @auth
 def api_research_log():
@@ -961,6 +1378,7 @@ def api_research_log():
             "ts": time.time(),
         })
         del research_log[200:]
+        persist()
         return jsonify({"ok": True})
     return jsonify({"log": research_log})
 
@@ -989,20 +1407,91 @@ def extract_page(url):
     except Exception as e:
         return None, str(e)[:120]
 
+def _crawl_links(seed, max_pages=50):
+    """Discover same-host links from a seed URL (breadth-first, capped, polite)."""
+    seen, queue, found = set(), [seed], []
+    host = re.sub(r"^https?://", "", seed).split("/")[0].lower()
+    while queue and len(found) < max_pages:
+        u = queue.pop(0)
+        if u in seen:
+            continue
+        seen.add(u)
+        content, err = extract_page(u)
+        if err:
+            continue
+        found.append(u)
+        try:
+            r = requests.get(u, headers={"User-Agent": "Mozilla/5.0"}, timeout=10)
+            for m in re.finditer(r'href=["\'](https?://[^"\'#]+)["\']', r.text[:250000]):
+                href = m.group(1)
+                h = re.sub(r"^https?://", "", href).split("/")[0].lower()
+                if h == host and href not in seen:
+                    queue.append(href)
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return found
+
+def _search_seed_urls(query, max_results=20):
+    """Collect real result URLs from DuckDuckGo's HTML search (no API key)."""
+    from urllib.parse import urlparse, parse_qs, unquote
+    urls = []
+    try:
+        r = requests.get("https://html.duckduckgo.com/html/",
+                         params={"q": query},
+                         headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        for m in re.finditer(r'href="([^"]+)"', r.text):
+            href = m.group(1)
+            target = None
+            if "uddg=" in href:                                   # DDG redirect link
+                target = parse_qs(urlparse(href).query).get("uddg", [None])[0]
+            elif href.startswith("http"):
+                target = href
+            if target:
+                u = unquote(target)
+                if u.startswith(("http://", "https://")) and "duckduckgo.com" not in u:
+                    urls.append(u)
+            if len(urls) >= max_results:
+                break
+    except Exception:
+        pass
+    return list(dict.fromkeys(urls))
+
 @app.route("/api/bulk-scrape", methods=["POST"])
 @auth
 def api_bulk_scrape():
-    """Politely scrape a list of URLs into the research log (capped + rate-limited)."""
+    """Politely scrape URLs / crawl a site / collect search results into the research log."""
     global research_log
     d = request.json or {}
-    urls = [u.strip() for u in (d.get("urls") or []) if isinstance(u, str) and u.startswith(("http://", "https://"))][:25]
+    mode = (d.get("mode") or "urls").lower()
     label = (d.get("label") or "bulk")[:60]
+    MAX_TOTAL, MAX_PER_HOST = 100, 20     # scaled up (was 25 / 5)
+
+    urls = [u.strip() for u in (d.get("urls") or [])
+            if isinstance(u, str) and u.startswith(("http://", "https://"))][:MAX_TOTAL]
+
+    if mode == "crawl":
+        seed = (d.get("url") or (urls[0] if urls else "")).strip()
+        if not seed.startswith(("http://", "https://")):
+            return jsonify({"error": "Crawl mode needs a starting http(s) URL, Sir."}), 400
+        try:
+            urls = _crawl_links(seed, max_pages=int(d.get("max_pages") or 50))
+        except Exception as e:
+            return jsonify({"error": f"Crawl failed: {str(e)[:150]}"}), 502
+    elif mode == "search":
+        q = (d.get("query") or "").strip()
+        if not q:
+            return jsonify({"error": "Search mode needs a query, Sir."}), 400
+        urls = _search_seed_urls(q, max_results=int(d.get("max_results") or 20))
+        urls = urls[:MAX_TOTAL]
+
     if not urls:
-        return jsonify({"error": "Give me some http(s) URLs, Sir."}), 400
+        return jsonify({"error": "No URLs to collect, Sir."}), 400
+
     per_host, accepted, skipped, failed = {}, [], [], []
     for u in urls:
         host = re.sub(r"^https?://", "", u).split("/")[0].lower()
-        if per_host.get(host, 0) >= 5:      # polite: max 5 pages per site per batch
+        if per_host.get(host, 0) >= MAX_PER_HOST:     # polite per-site cap
             skipped.append(u); continue
         per_host[host] = per_host.get(host, 0) + 1
         content, err = extract_page(u)
@@ -1014,8 +1503,9 @@ def api_bulk_scrape():
         else:
             failed.append((u, err or "failed"))
         del research_log[200:]
-        time.sleep(0.5)                      # rate-limited between fetches
-    return jsonify({"ok": True, "saved": len(accepted), "skipped": len(skipped),
+        time.sleep(0.5)                               # rate-limited between fetches
+    persist()
+    return jsonify({"ok": True, "mode": mode, "saved": len(accepted), "skipped": len(skipped),
                     "failed": len(failed), "failed_items": failed[:10]})
 
 @app.route("/webhook/telegram", methods=["POST"])
@@ -1082,6 +1572,29 @@ def tg_webhook():
         pid = text.split(" ",1)[1].strip()
         pending.pop(pid, None)
         tg("✅ Email draft discarded, Sir.")
+
+    # DESKTOP approval (approve/deny a PC-agent task)
+    elif upper.startswith("APPROVE "):
+        tid = text.split()[-1]
+        t = None
+        for i, cand in enumerate(desktop_pending):
+            if cand["id"] == tid:
+                desktop_pending.pop(i)
+                cand["status"] = "queued"
+                desktop_queue.append(cand)
+                t = cand
+                break
+        tg(f"✅ Desktop task approved, Sir: \"{t['command'][:60]}\"" if t else "Approval not found, Sir.")
+
+    elif upper.startswith("DENY "):
+        tid = text.split()[-1]
+        ok = False
+        for i, t in enumerate(desktop_pending):
+            if t["id"] == tid:
+                desktop_pending.pop(i)
+                ok = True
+                break
+        tg(f"🙅 Desktop task denied, Sir." if ok else "Approval not found, Sir.")
 
     # Freeform chat with Jarvis
     else:
@@ -1239,6 +1752,7 @@ def api_reminder():
     REMINDERS.append({"id": str(uuid.uuid4())[:8], "text": text, "when": when, "done": False})
     if len(REMINDERS) > 200:
         REMINDERS[:] = [r for r in REMINDERS if not r.get("done")][-200:]
+    persist()
     return jsonify({"ok": True})
 
 @app.route("/api/reminder/<rid>", methods=["DELETE"])
@@ -1246,6 +1760,7 @@ def api_reminder():
 def api_reminder_delete(rid):
     global REMINDERS
     REMINDERS = [r for r in REMINDERS if r.get("id") != rid]
+    persist()
     return jsonify({"ok": True})
 
 def reminder_loop():
@@ -1275,10 +1790,22 @@ def api_canvas_status():
             print("canvas status err", e)
     return jsonify({"configured": configured, "courses": courses, "next_due": next_due})
 
+# ── DATA EXPORT (backup the research log / memory / reminders) ────────
+@app.route("/api/data/export", methods=["GET"])
+@auth
+def api_data_export():
+    return jsonify({
+        "exported_at": datetime.datetime.utcnow().isoformat(),
+        "research_log": research_log,
+        "memory": memory_store,
+        "reminders": REMINDERS,
+    })
+
 # ── START ─────────────────────────────────────────────────────────────
 # Start background loops at import time so they run under gunicorn too
 # (gunicorn never executes the __main__ block). One worker = one set of
 # loops; Render's default `gunicorn app11:app` uses a single worker.
+load_persist()
 threading.Thread(target=canvas_loop, daemon=True).start()
 threading.Thread(target=outlook_loop, daemon=True).start()
 threading.Thread(target=digest_loop, daemon=True).start()

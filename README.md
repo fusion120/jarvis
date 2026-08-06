@@ -7,6 +7,7 @@ Personal AI assistant for Mohamed. Flask backend (Render) + static website (Netl
 - `backend/` — Flask API (deploy to Render)
 - `frontend/` — website (deploy to Netlify)
 - `extension/` — Chrome extension (load unpacked)
+- `agent/` — local desktop agent (run on the PC for full control + coding)
 
 ## Setup
 
@@ -34,11 +35,38 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 
 Jarvis can see and drive **all** your open tabs, not just the active one: `list_tabs`, `read_tab`/`switch_tab`/`close_tab` (by URL, title, or tab number), `go_back`/`go_forward`, `new_window`, `group_tabs` (auto-group tabs by topic), `save_session`/`restore_session` (save and reopen whole multi-tab sessions by voice), and `save_tab` (save the page you're on into the **Research Log**, shown on the Research page). Try: *"list my tabs"*, *"switch to the tab about X"*, *"group my tabs by project"*, *"save my session"*, or *"save this tab"*.
 
-## Bulk scraping
+## Bulk scraping & mass data collection
 
-The **Research page** has a bulk collector: paste up to 25 URLs (one per line) and Jarvis pulls each page's title, meta description, and main text into your **Research Log** — handy for competitive research, client-site audits, or archiving. Or just say **"scrape my open tabs"** to collect every tab you have open in Chrome at once.
+The **Research page** has a collector with three modes:
+- **URLs** — paste up to **100 URLs** (one per line) and Jarvis pulls each page's title, meta description, and main text into your **Research Log** — handy for competitive research, client-site audits, or archiving.
+- **Crawl a site** — give one seed URL and Jarvis breadth-first crawls that site (up to 50 same-host pages) into the log.
+- **Search the web** — give a query and Jarvis collects the top result URLs and scrapes them.
 
-It's built politely on purpose: ~5 pages max per site per run, a 0.5s pause between requests, 10s timeouts, and failed pages are skipped and reported — no login-walled content, no anti-bot evasion.
+Or just say **"scrape my open tabs"** to collect every tab you have open in Chrome at once.
+
+It's built politely on purpose: ~20 pages max per site per run, a 0.5s pause between requests, 10s timeouts, and failed pages are skipped and reported — no login-walled content, no anti-bot evasion. The **Research Log, Memory, and Reminders now survive Render restarts** (saved to `backend/data/store.json`), and the **⬇️ Download** button on the Research page exports the whole log as JSON.
+
+## Desktop agent (full PC control)
+
+The Chrome extension can only reach the browser — so there's a second agent that gives Jarvis real control of the computer. A small local Python program polls the backend (exactly like the extension) and carries out tasks on Windows:
+
+- **Open apps** (`open notepad`), list/read/find files, system info, network info + LAN scan, screenshots, window list, printers / USB / displays inventory, clipboard.
+- **Run commands and code**, create/edit/delete files, print documents, install software (via winget), shut down/restart.
+- **Safety by default:** read-only actions run instantly; risky ones (deletes, writes outside the workspace, arbitrary commands, installs, shutdown) pause for a one-click **Approve/Deny** on the **Desktop page** or Telegram; destructive commands (`format`, `rm -rf`, `diskpart`, …) are blocked outright.
+
+**Setup:**
+1. `pip install -r agent/requirements.txt` (or double-click `agent/run_agent.bat` which installs deps).
+2. Run `python agent/jarvis_agent.py` — it asks for your **backend URL** and **API Secret** once, saving them to `agent/agent_config.json` (gitignored).
+3. Leave it running (or start it with Task Scheduler at login). The **Desktop page** shows live status + approvals + recent results.
+4. Smart-home / phone control isn't built — the agent enumerates USB/printers/displays and does network diagnostics, and has room for per-device integrations later.
+
+## Coding powers
+
+Jarvis can build, write, run, and fix code in a **workspace folder** (default `C:\Users\elsay\jarvis-workspace`). Say in chat *"write a python script that …"* or use the **Coding page**:
+
+- It plans the steps, writes the files, runs them, reads the output, and iterates on errors until the task works (or hits a safety cap).
+- All coding reads/writes are sandboxed to the workspace; anything outside needs approval.
+- The **Coding page** has a live file browser (served by the agent on `localhost:8765`, so only from your PC) plus a task box.
 
 ## Skills (10 pro capabilities)
 

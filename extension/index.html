@@ -495,6 +495,12 @@ body::before{
       <div class="ni" onclick="go('research',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Research
       </div>
+      <div class="ni" onclick="go('desktop',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>Desktop
+      </div>
+      <div class="ni" onclick="go('coding',this)">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>Coding
+      </div>
       <div class="sb-sec">Personal</div>
       <div class="ni" onclick="go('todos',this)">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>Reminders
@@ -689,15 +695,59 @@ body::before{
         </div>
         <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div></div>
         <div class="math-box" style="margin:18px 0 0">
-          <textarea id="scrape-in" placeholder="Bulk collector — paste up to 25 URLs (one per line), Jarvis pulls each page into your Research Log…" rows="3" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();runScrape()}"></textarea>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+            <select id="scrape-mode" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2);border-radius:8px;padding:6px 8px;font-size:12px" onchange="scrapeModeChanged()">
+              <option value="urls">&#128203; URLs</option>
+              <option value="crawl">&#128375;&#65039; Crawl a site</option>
+              <option value="search">&#128269; Search the web</option>
+            </select>
+            <span class="inp-hint" id="scrape-hint">paste up to 100 URLs (one per line)</span>
+          </div>
+          <textarea id="scrape-in" placeholder="e.g. one URL per line, up to 100 — or a seed URL / search query depending on the mode above" rows="3" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();runScrape()}"></textarea>
           <div class="math-foot">
-            <div class="math-exs" style="font-size:11.5px;color:var(--text3);padding:6px 0">Polite scraper: ~5 pages per site, rate-limited. Say "scrape my open tabs" to grab every tab.</div>
-            <button class="math-btn" id="scrape-btn" onclick="runScrape()">Scrape URLs &#8594;</button>
+            <div class="math-exs" style="font-size:11.5px;color:var(--text3);padding:6px 0">Polite: ~20 pages per site, rate-limited. Say "scrape my open tabs" to grab every tab.</div>
+            <button class="math-btn" id="scrape-btn" onclick="runScrape()">Scrape &#8594;</button>
           </div>
         </div>
         <div id="scrape-out"></div>
-        <div class="p-sub" style="margin:26px 0 6px">Research Log <span style="font-weight:400;color:var(--text3)">· say "save this tab" to grab the page you're on</span></div>
+        <div class="p-sub" style="margin:26px 0 6px;display:flex;align-items:center;justify-content:space-between">Research Log <span style="font-weight:400;color:var(--text3)">· say "save this tab" to grab the page you're on</span>
+          <button class="math-btn" style="font-size:11.5px;padding:5px 10px" onclick="downloadLog()">&#11015;&#65039; Download</button>
+        </div>
         <div id="rlog-list" style="display:flex;flex-direction:column;gap:10px;margin-top:8px"></div>
+      </div></div>
+    </div>
+
+    <!-- DESKTOP -->
+    <div class="page" id="page-desktop">
+      <div class="p-scroll"><div class="p-wrap" style="max-width:760px">
+        <div class="p-h">Desktop Agent</div>
+        <div class="p-sub">Jarvis can open apps, run commands, and manage files on this PC. Risky actions wait for your OK, Sir.</div>
+        <div class="status-line" style="margin-bottom:14px">
+          <div class="sdot" id="desktop-dot" style="background:var(--text3);box-shadow:none"></div>
+          <span id="desktop-status" style="font-size:12px">Check backend status, Sir.</span>
+        </div>
+        <div class="p-sub" style="margin:20px 0 8px">Pending approvals</div>
+        <div id="approve-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:6px"></div>
+        <div class="p-sub" style="margin:22px 0 8px">Recent results</div>
+        <div id="desktop-results" style="display:flex;flex-direction:column;gap:10px"></div>
+      </div></div>
+    </div>
+
+    <!-- CODING -->
+    <div class="page" id="page-coding">
+      <div class="p-scroll"><div class="p-wrap" style="max-width:760px">
+        <div class="p-h">Coding Workspace</div>
+        <div class="p-sub">Jarvis writes and runs code in your workspace folder, iterating until it works. The file browser needs the agent on this PC, Sir.</div>
+        <div class="math-box">
+          <textarea id="code-in" placeholder="e.g. write a python script that renames all .jpg files in a folder to lowercase" rows="3" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runCode()}"></textarea>
+          <div class="math-foot">
+            <span class="inp-hint">&#9166; run &nbsp;·&nbsp; &#8679;&#9166; newline</span>
+            <button class="math-btn" id="code-btn" onclick="runCode()">&#128187; Run</button>
+          </div>
+        </div>
+        <div id="code-out" style="display:flex;flex-direction:column;gap:10px;margin-top:6px"></div>
+        <div class="p-sub" style="margin:24px 0 8px">Workspace <span style="font-weight:400;color:var(--text3)">· agent serves localhost:8765</span></div>
+        <div id="ws-browser"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Start the desktop agent, then open Jarvis on this PC to browse the workspace, Sir.</div></div>
       </div></div>
     </div>
 
@@ -870,10 +920,11 @@ function updateLandTime(){
 }
 
 // ─── NAV ──────────────────────────────────────
-const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',skills:'Skills',research:'Deep Research',todos:'Reminders',notes:'Notes',settings:'Settings'};
-const T_BADGE={chat:'llama-3.3-70b',canvas:'lms',outlook:'microsoft',brain:'audio',math:'llama-3.3-70b',skills:'10 pro',research:'search',todos:'local',notes:'local',settings:'config'};
+const T_TITLE={chat:'Chat',canvas:'Canvas',outlook:'Outlook',brain:'Brain.fm',math:'Math Solver',skills:'Skills',research:'Deep Research',desktop:'Desktop Agent',coding:'Coding Workspace',todos:'Reminders',notes:'Notes',settings:'Settings'};
+const T_BADGE={chat:'llama-3.3-70b',canvas:'lms',outlook:'microsoft',brain:'audio',math:'llama-3.3-70b',skills:'10 pro',research:'search',desktop:'pc',coding:'code',todos:'local',notes:'local',settings:'config'};
 
 function go(tab,el){
+  stopDesktopPoll();
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.ni').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+tab).classList.add('active');
@@ -884,6 +935,8 @@ function go(tab,el){
   if(tab==='outlook')loadEmails();
   if(tab==='research')renderResearch();
   if(tab==='skills')openSkill(curSkill);
+  if(tab==='desktop'){loadDesktopStatus();startDesktopPoll();}
+  if(tab==='coding'){runCodeInit();loadWorkspace();}
   if(tab==='todos'){renderTodos();renderReminders();}
   if(tab==='notes')renderNotes();
   if(tab==='settings')loadSettings();
@@ -1341,6 +1394,121 @@ async function morningDigest(){
   }catch(e){toast('Digest failed, Sir.','err');}
 }
 
+// ─── DESKTOP AGENT ───────────────────────────
+let desktopTimer=null;
+function startDesktopPoll(){if(!desktopTimer)desktopTimer=setInterval(loadDesktopStatus,5000);}
+function stopDesktopPoll(){if(desktopTimer){clearInterval(desktopTimer);desktopTimer=null;}}
+async function loadDesktopStatus(){
+  const url=getUrl();if(!url)return;
+  const el=document.getElementById('desktop-status');const dot=document.getElementById('desktop-dot');
+  try{
+    const r=await fetch(url+'/api/desktop/status');
+    const d=await r.json();
+    dot.style.background=d.connected?'var(--green)':'var(--text3)';
+    dot.style.boxShadow=d.connected?'0 0 6px var(--green)':'none';
+    const parts=[d.connected?'🟢 PC agent connected':'⚪ PC agent not detected'];
+    if(d.queue)parts.push(d.queue+' queued');
+    if(d.running)parts.push(d.running+' running');
+    if(d.pending)parts.push(d.pending+' need approval');
+    el.textContent=parts.join(' · ');
+    renderApprovals(d.pending||[]);
+    renderDesktopResults(d.recent||[]);
+  }catch(e){
+    dot.style.background='var(--red)';dot.style.boxShadow='none';
+    el.textContent='Backend unreachable — check Settings, Sir.';
+  }
+}
+function renderApprovals(list){
+  const box=document.getElementById('approve-list');if(!box)return;
+  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Nothing waiting, Sir.</div>';return;}
+  box.innerHTML=list.map(t=>{
+    const risky=t.steps.map((s,i)=>'  <b>'+esc(s.action)+'</b>'+(t.verdicts&&t.verdicts[i]==='approve'?' <span style="color:#e5a13a">(needs OK)</span>':'')+' — '+esc(s.command||s.path||s.app||s.name||'').slice(0,80)).join('<br>');
+    return '<div style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:12px 14px">'
+      +'<div style="font-size:13px;font-weight:600;margin-bottom:6px">'+esc(t.command)+'</div>'
+      +'<div style="font-size:11.5px;color:var(--text3);margin-bottom:10px">'+risky+'</div>'
+      +'<button class="math-btn" style="margin-right:8px" onclick="approveTask(\''+t.id+'\',true)">✅ Approve</button>'
+      +'<button class="math-btn" style="background:transparent;color:var(--text2)" onclick="approveTask(\''+t.id+'\',false)">✋ Deny</button>'
+      +'</div>';
+  }).join('');
+}
+async function approveTask(id,approve){
+  const url=getUrl();if(!url)return;
+  await fetch(url+'/api/desktop/approval',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({task_id:id,action:approve?'approve':'deny'})}).catch(()=>{});
+  loadDesktopStatus();
+}
+function renderDesktopResults(list){
+  const box=document.getElementById('desktop-results');if(!box)return;
+  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">No results yet — ask Jarvis something on your PC, Sir.</div>';return;}
+  box.innerHTML=list.map(v=>'<div style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:10px 12px">'
+    +'<div style="font-size:12.5px;font-weight:600;margin-bottom:4px">'+(v.label==='code'?'💻 ':'🖥️ ')+esc(v.command)+'</div>'
+    +'<div style="font-size:11.5px;color:var(--text3)">'+v.summary.map(esc).join(' → ')+'</div></div>').join('');
+}
+
+// ─── CODING POWERS ───────────────────────────
+async function runCode(){
+  const inp=document.getElementById('code-in');const q=inp.value.trim();if(!q)return;
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  const btn=document.getElementById('code-btn');
+  if(btn){btn.disabled=true;btn.textContent='Planning…';}
+  const out=document.getElementById('code-out');
+  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">Jarvis is planning the coding task, Sir…</div>';
+  try{
+    const r=await fetch(url+'/api/code/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:q})});
+    const d=await r.json();
+    if(d.error){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ '+esc(d.error)+'</div>';}
+    else if(d.blocked){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">🚫 Blocked, Sir — '+esc(d.reason||'')+'</div>';}
+    else if(d.needs_approval){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">✋ That needs your approval first — check the <b>Desktop</b> page, Sir.</div>';}
+    else{if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Queued <b>'+d.steps.length+'</b> actions — progress lands on the Desktop page, Sir.</div>';}
+  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Backend unreachable, Sir.</div>';}
+  if(btn){btn.disabled=false;btn.textContent='💻 Run';}
+}
+function runCodeInit(){
+  const out=document.getElementById('code-out');
+  if(out&&!out.innerHTML.trim())out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a coding task above — Jarvis plans, writes, runs, and fixes until it works, Sir.</div>';
+}
+async function loadWorkspace(){
+  const box=document.getElementById('ws-browser');if(!box)return;
+  try{
+    const r=await fetch('http://localhost:8765/api/ws',{signal:AbortSignal.timeout(3000)});
+    const d=await r.json();
+    box.innerHTML='<div style="margin-bottom:8px;font-size:11.5px;color:var(--text3)">'+esc(d.workspace)+'</div><div id="ws-tree" style="display:flex;flex-direction:column;gap:6px"></div>';
+    wsLoadDir(d.workspace,'ws-tree');
+  }catch(e){
+    box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Agent not reachable on this PC (localhost:8765). Run <b>agent/run_agent.bat</b> and open Jarvis on the same computer, Sir.</div>';
+  }
+}
+async function wsLoadDir(path,containerId){
+  const box=document.getElementById(containerId);if(!box)return;
+  try{
+    const r=await fetch('http://localhost:8765/api/files?path='+encodeURIComponent(path),{signal:AbortSignal.timeout(3000)});
+    const d=await r.json();
+    box.innerHTML='';
+    (d.entries||[]).forEach(e=>{
+      const row=document.createElement('div');
+      row.style.cssText='display:flex;align-items:center;gap:8px;font-size:12px;padding:2px 4px;border-radius:6px;cursor:pointer';
+      row.style.background='var(--surface2)';
+      if(e.dir){
+        row.innerHTML='<b style="color:#7fb4ff">📁</b> '+esc(e.name)+' <span style="color:var(--text3)">/</span>';
+        row.onclick=()=>wsLoadDir(path+'/'+e.name,containerId);
+      }else{
+        row.innerHTML='<b>📄</b> '+esc(e.name)+' <span style="color:var(--text3);margin-left:auto">'+(e.size<1024?e.size+' B':Math.round(e.size/1024)+' KB')+'</span>';
+        row.onclick=()=>wsOpenFile(path+'/'+e.name);
+      }
+      box.appendChild(row);
+    });
+    if(!(d.entries||[]).length)box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">(empty folder, Sir)</div>';
+  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not list '+esc(path)+', Sir.</div>';}
+}
+async function wsOpenFile(path){
+  const box=document.getElementById('ws-browser');if(!box)return;
+  try{
+    const r=await fetch('http://localhost:8765/api/file?path='+encodeURIComponent(path),{signal:AbortSignal.timeout(5000)});
+    const text=await r.text();
+    box.innerHTML='<div style="margin-bottom:8px"><span style="cursor:pointer;color:#7fb4ff" onclick="loadWorkspace()">← workspace</span> <span style="font-size:11.5px;color:var(--text3)">'+esc(path)+'</span></div>'
+      +'<pre style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:12px;font-size:11.5px;max-height:420px;overflow:auto;white-space:pre-wrap">'+esc(text.slice(0,30000))+'</pre>';
+  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not read '+esc(path)+', Sir.</div>';}
+}
+
 // ─── DEEP RESEARCH ───────────────────────────
 async function runResearch(){
   const inp=document.getElementById('research-in');const q=inp.value.trim();if(!q)return;
@@ -1378,19 +1546,55 @@ async function renderResearchLog(){
 async function runScrape(){
   const inp=document.getElementById('scrape-in');if(!inp)return;
   const out=document.getElementById('scrape-out');
-  const urls=inp.value.split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!urls.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste some URLs first, Sir.</div>';return;}
+  const mode=(document.getElementById('scrape-mode')||{}).value||'urls';
+  const raw=inp.value.split('\n').map(s=>s.trim()).filter(Boolean);
   const url=getUrl();if(!url)return;
+  const body={mode,label:'bulk'};
+  let verb='Scraping';
+  if(mode==='urls'){
+    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste some URLs first, Sir.</div>';return;}
+    body.urls=raw;verb='Scraping '+raw.length+' pages';
+  }else if(mode==='crawl'){
+    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste a seed URL to crawl, Sir.</div>';return;}
+    body.url=raw[0];verb='Crawling '+raw[0];
+  }else{
+    body.query=raw.join(' ');
+    if(!body.query){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a search query first, Sir.</div>';return;}
+    verb='Searching for "'+body.query.slice(0,60)+'"';
+  }
   const btn=document.getElementById('scrape-btn');
-  if(btn){btn.disabled=true;btn.textContent='Scraping…';}
-  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">Scraping '+urls.length+' pages…</div>';
+  if(btn){btn.disabled=true;btn.textContent='Working…';}
+  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">'+verb+'… (can take a minute)</div>';
   try{
-    const r=await fetch(url+'/api/bulk-scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({urls})});
+    const r=await fetch(url+'/api/bulk-scrape',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
     const d=await r.json();
-    if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Saved <b>'+d.saved+'</b> page(s) to the Research Log, skipped <b>'+d.skipped+'</b> (per-site cap), failed <b>'+d.failed+'</b>.'+(d.failed_items&&d.failed_items.length?('<div style="margin-top:6px;color:var(--text3);font-size:11.5px">'+d.failed_items.map(f=>esc(f[0])+' — '+esc(f[1])).join('<br>')+'</div>'):'')+'</div>';
+    if(d.error){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ '+esc(d.error)+'</div>';}
+    else if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Saved <b>'+d.saved+'</b> page(s) to the Research Log, skipped <b>'+d.skipped+'</b> (per-site cap), failed <b>'+d.failed+'</b>.'+(d.failed_items&&d.failed_items.length?('<div style="margin-top:6px;color:var(--text3);font-size:11.5px">'+d.failed_items.map(f=>esc(f[0])+' — '+esc(f[1])).join('<br>')+'</div>'):'')+'</div>';
     renderResearchLog();
   }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Could not reach the backend, Sir.</div>';}
-  if(btn){btn.disabled=false;btn.textContent='Scrape URLs →';}
+  if(btn){btn.disabled=false;btn.textContent='Scrape →';}
+}
+function scrapeModeChanged(){
+  const mode=document.getElementById('scrape-mode').value;
+  const hint=document.getElementById('scrape-hint');
+  const inp=document.getElementById('scrape-in');
+  if(mode==='urls'){hint.textContent='paste up to 100 URLs (one per line)';inp.placeholder='e.g. one URL per line, up to 100…';}
+  else if(mode==='crawl'){hint.textContent='one seed URL — Jarvis crawls same-site pages';inp.placeholder='e.g. https://example.com — Jarvis crawls that site…';}
+  else{hint.textContent='a search query — Jarvis collects result URLs';inp.placeholder='e.g. best SEO practices for small restaurants…';}
+  inp.value='';
+}
+async function downloadLog(){
+  const url=getUrl();if(!url)return;
+  try{
+    const r=await fetch(url+'/api/research-log');
+    const d=await r.json();
+    const blob=new Blob([JSON.stringify(d.log||[],null,2)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download='jarvis_research_log.json';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }catch(e){toast('Download failed, Sir.','err');}
 }
 
 // ─── SCHEDULED REMINDERS (Telegram) ──────────
