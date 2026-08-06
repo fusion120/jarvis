@@ -585,13 +585,14 @@ def plan_steps(command):
     if steps:
         return steps
     # Fallback: if the user wants a site opened, never fail the plan — open
-    # the site they mentioned in a new tab directly.
+    # the site they mentioned in a new tab directly. Still guarantee the
+    # search injection so find/search tasks actually type their query.
     m = re.search(r"([a-z0-9-]+\.(?:com|org|net|io|app|dev|co|tv|me|edu|gov))", command or "", re.I)
     if m:
-        return [{"action": "new_tab", "url": _normalize_url(m.group(1))}]
+        return _ensure_search(command, [{"action": "new_tab", "url": _normalize_url(m.group(1))}])
     for name, domain in SITE_ALIASES.items():
         if re.search(r"\b" + re.escape(name) + r"\b", command or "", re.I):
-            return [{"action": "new_tab", "url": "https://" + domain}]
+            return _ensure_search(command, [{"action": "new_tab", "url": "https://" + domain}])
     return []
 
 def decide_next(command, log, page):
@@ -1132,7 +1133,7 @@ def api_skill(skill):
 @app.route("/")
 def health():
     return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir.",
-                    "build":"search-guarantee-v2"})
+                    "build":"search-guarantee-v3"})
 
 def search_web(q, top=5):
     """Quick web search for grounding: Google News RSS + DuckDuckGo Instant Answer."""
