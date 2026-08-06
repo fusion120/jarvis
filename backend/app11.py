@@ -535,11 +535,53 @@ def prefer_new_tab(command, steps):
             break
     return out
 
+_FIND_HINT = re.compile(r"\b(?:find|search|look for|lookup|locate|get me|find me|best\s+\w+|what'?s the|who won|what happened|how (?:to|do)|treat|weather|score|news about)\b", re.I)
+
+def _derive_query(command):
+    """Best-effort extraction of the search query from a find/search command.
+    Used only as a safety net when the model's plan forgot to include a search step."""
+    q = command or ""
+    q = re.sub(r"^(?:please |can you |could you |hey jarvis\b|jarvis\b,?\s*)+", "", q, flags=re.I)
+    # "search X for Y" / "search for Y" -> keep Y as the query
+    m = re.match(r"^search\s+(?:.+?\s+)?for\s+(.*)$", q, flags=re.I)
+    if m:
+        q = m.group(1)
+    else:
+        # "open X and Y" / "open X, Y" / "open X to Y" -> keep Y as the query
+        m = re.match(r"^(?:open|go to|navigate to|visit)\s+.+?\b(?:and|,|to|so i can)\s+(.*)$", q, flags=re.I)
+        if m:
+            q = m.group(1)
+    # strip common filler around the real topic (longest alternatives first)
+    q = re.sub(r"\b(?:find me|get me|find\s+the\s+best\s+article\s+(?:about|to)|the best article (?:about|to)|look for|search for|find|search)\b", " ", q, flags=re.I)
+    q = re.sub(r"\b(?:in my browser|on the web|online|please)\b", " ", q, flags=re.I)
+    q = re.sub(r"\s+", " ", q).strip().strip(".,!?;:")
+    return q[:60]
+
+def _ensure_search(command, steps):
+    """Guarantee a find/search task types its query: if no step is a search,
+    inject search -> wait -> read_page after the last navigation step."""
+    if not command or not steps:
+        return steps
+    if any(s.get("action") == "search" for s in steps):
+        return steps
+    if not _FIND_HINT.search(command or ""):
+        return steps
+    q = _derive_query(command)
+    if not q:
+        return steps
+    idx = 0
+    for i, s in enumerate(steps):
+        if s.get("action") in ("new_tab", "navigate"):
+            idx = i + 1
+    return steps[:idx] + [{"action": "search", "query": q},
+                          {"action": "wait", "ms": 1500},
+                          {"action": "read_page"}] + steps[idx:]
+
 def plan_steps(command):
     """Turn a natural-language command into a first batch of steps."""
     obj = ask_json("You are Jarvis planning browser automation. " + ACTIONS_DOC,
                    f"Task: {command}\nCurrent tab: {browser_tab_state.get('url','')} ({browser_tab_state.get('title','')})")
-    steps = prefer_new_tab(command, sanitize_steps((obj or {}).get("steps")))
+    steps = _ensure_search(command, prefer_new_tab(command, sanitize_steps((obj or {}).get("steps"))))
     if steps:
         return steps
     # Fallback: if the user wants a site opened, never fail the plan — open

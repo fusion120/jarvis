@@ -168,7 +168,7 @@ async function execStep(step) {
       case 'search': {
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: (query) => {
+          func: async (query) => {
             const q = (query || '').trim(); if (!q) return null;
             const inputs = [...document.querySelectorAll('input,textarea')]
               .filter(el => el.offsetParent !== null);
@@ -184,30 +184,36 @@ async function execStep(step) {
             if (setter) setter.call(pick, q); else pick.value = q;
             pick.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: q }));
             pick.dispatchEvent(new Event('change', { bubbles: true }));
-            // Try submitting: form → button → keydown(Enter) sequentially
-            const form = pick.closest('form');
-            if (form) {
-              // Try form.requestSubmit (real submit, triggers page nav)
-              if (typeof form.requestSubmit === 'function') {
-                try { form.requestSubmit(); return 'searched (form submit): ' + q; } catch {}
-              }
-              // Try clicking the submit button inside the form
-              const btn = form.querySelector('[type=submit],button[type=submit],input[type=submit]');
-              if (btn) { btn.click(); return 'searched (button): ' + q; }
-            }
-            // Last resort: find any nearby search button and click it
-            const anyBtn = document.querySelector('button[aria-label*="search" i],button[aria-label*="Search" i],input[aria-label*="search" i],.search-submit,[type=submit]');
-            if (anyBtn) { anyBtn.click(); return 'searched (fallback button): ' + q; }
-            // If nothing works, at least the text was typed in — the user can press Enter
+            // Give autocomplete suggestions a moment to render, then try, in order:
+            //   1) click the top suggestion (Wikipedia/Google style) -> direct nav
+            //   2) Enter on the input (what SPA search listens for)
+            //   3) real form submit / submit button
+            await new Promise(res => setTimeout(res, 400));
+            const before = location.href;
+            const sug = document.querySelector(
+              '.suggestions-results a, .suggestions-result, .autocomplete-suggestion, ' +
+              'li[role="option"] a, [role="option"] div[role="option"], .oo-ui-menuSelectWidget [role="option"]');
+            if (sug) { try { sug.click(); return 'searched (top suggestion): ' + q; } catch {} }
             pick.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
             pick.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
             pick.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-            return 'typed (enter key): ' + q;
+            await new Promise(res => setTimeout(res, 300));
+            if (location.href !== before) return 'searched (enter navigated): ' + q;
+            const form = pick.closest('form');
+            if (form && typeof form.requestSubmit === 'function') {
+              try { form.requestSubmit(); return 'searched (form submit): ' + q; } catch {}
+            }
+            if (form) {
+              const btn = form.querySelector('[type=submit],button[type=submit],input[type=submit]');
+              if (btn) { btn.click(); return 'searched (submit button): ' + q; }
+            }
+            return 'typed but could not submit: ' + q;
           },
           args: [step.query]
         });
-        const ok = r?.result && !r.result.startsWith('search failed');
-        return { ok, done: r?.result || 'search failed' };
+        const res = r?.result || 'search failed';
+        const ok = !!res && !res.startsWith('no search input') && !res.startsWith('search failed');
+        return { ok, done: res };
       }
 
       case 'run_js': {
