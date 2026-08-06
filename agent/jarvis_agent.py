@@ -469,7 +469,7 @@ def main():
     auth_warned = False
     while True:
         try:
-            r = requests.get(f"{backend}/api/desktop/poll", headers=headers, timeout=10)
+            r = requests.get(f"{backend}/api/desktop/poll", headers=headers, timeout=35)  # 35s to survive Render free-tier cold starts
             if r.status_code != 200:
                 if not auth_warned:
                     log(f"Backend responded {r.status_code} — check the URL and API Secret, Sir. ({str(r.text)[:120]})")

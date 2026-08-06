@@ -432,6 +432,7 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"press_key","key":"Enter"}
 - {"action":"run_js","code":"return document.title"}
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
+There is NO "play" action. To play a video/song: open the site, read_page, then {"action":"click_text","text":"<a video title>"} to start it. For "a random video/song", click the first video/song title you see on the page. For "a video about X", search for X first, then click the top result.
 When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests.
 Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"list_tabs"} — list all open tabs
@@ -446,12 +447,8 @@ Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"save_tab","label":"note"} — save the current tab's text to the research log
 - {"action":"collect_tabs","label":"note"} — scrape ALL open tabs into the research log (polite bulk collector)"""
 
-def ask_json(system, user):
-    """Ask Groq for a JSON object (strip markdown fences if any)."""
-    if not GROQ_KEY:
-        return None
-    text = _groq_call([{"role": "user", "content": user}], system=system,
-                      max_tokens=2000, temperature=0.2)
+def _json_or_none(text):
+    """Try to parse `text` as JSON; also salvage a JSON object out of prose."""
     if not text:
         return None
     text = re.sub(r"^```[a-z]*\n?", "", text.strip())
@@ -459,7 +456,27 @@ def ask_json(system, user):
     try:
         return json.loads(text)
     except Exception:
+        pass
+    # The model sometimes wraps the JSON in a sentence — pull out the first {...}.
+    m = re.search(r"\{.*\}", text, re.S)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+def ask_json(system, user, retries=1):
+    """Ask Groq for a JSON object. Retries once on a bad/empty response."""
+    if not GROQ_KEY:
         return None
+    for _ in range(retries + 1):
+        text = _groq_call([{"role": "user", "content": user}], system=system,
+                          max_tokens=2000, temperature=0.2)
+        obj = _json_or_none(text)
+        if obj is not None:
+            return obj
+    return None
 
 SITE_ALIASES = {
     "yt": "youtube.com", "youtube": "youtube.com",
@@ -517,9 +534,18 @@ def plan_steps(command):
     """Turn a natural-language command into a first batch of steps."""
     obj = ask_json("You are Jarvis planning browser automation. " + ACTIONS_DOC,
                    f"Task: {command}\nCurrent tab: {browser_tab_state.get('url','')} ({browser_tab_state.get('title','')})")
-    if not obj:
-        return []
-    return prefer_new_tab(command, sanitize_steps(obj.get("steps")))
+    steps = prefer_new_tab(command, sanitize_steps((obj or {}).get("steps")))
+    if steps:
+        return steps
+    # Fallback: if the user wants a site opened, never fail the plan — open
+    # the site they mentioned in a new tab directly.
+    m = re.search(r"([a-z0-9-]+\.(?:com|org|net|io|app|dev|co|tv|me|edu|gov))", command or "", re.I)
+    if m:
+        return [{"action": "new_tab", "url": _normalize_url(m.group(1))}]
+    for name, domain in SITE_ALIASES.items():
+        if re.search(r"\b" + re.escape(name) + r"\b", command or "", re.I):
+            return [{"action": "new_tab", "url": "https://" + domain}]
+    return []
 
 def decide_next(command, log, page):
     """Decide if the goal is done; otherwise produce the next batch of steps.
