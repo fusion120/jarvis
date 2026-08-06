@@ -390,6 +390,7 @@ desktop_last_seen = 0.0         # epoch seconds of the agent's last poll
 desktop_workspace = ""          # agent's workspace, reported via X-Jarvis-Workspace header
 desktop_answers   = []          # recent finished results {command, answer, ts}
 code_iters        = {}          # coding task_id → iterations left
+loop_history      = {}          # chain → list of recent step-batch signatures
 
 # ── PERSISTENCE (survives Render restarts; /api/data/export is the backup) ──
 PERSIST_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
@@ -578,6 +579,7 @@ def decide_next(command, log, page):
 def finish_browser(chain, command, answer):
     """End a command chain and deliver the final answer (Telegram + stored for the site)."""
     browser_iters.pop(chain, None)
+    _clear_loop(chain)
     if not answer:
         tg(f"✅ Browser task complete: \"{command[:40]}\"")
         return
@@ -591,6 +593,41 @@ def enqueue_browser(command, steps, chain=None):
             "steps": steps, "chain": chain or str(uuid.uuid4())[:8]}
     browser_queue.append(task)
     return task
+
+# ── AGENT LOOP DETECTION ──────────────────────────────────────────────
+# Catches an agent stuck re-issuing the same batch of steps (browser
+# re-clicking the same result, code re-running the same failing file write).
+# Pure read-only rechecks (lone read_page/wait) are not counted as loops.
+_MUTATING = {"new_tab","navigate","click_text","click_selector","search",
+             "type_selector","type_label","write_file","edit_file","run_command",
+             "execute_code","press_key","run_js"}
+
+def _batch_sig(steps):
+    out = []
+    for s in (steps or [])[:8]:
+        key = (s.get("url") or s.get("text") or s.get("query") or s.get("selector")
+               or s.get("label") or s.get("value") or s.get("key") or s.get("tab") or "")
+        out.append((s.get("action",""), str(key)[:80]))
+    return tuple(out)
+
+def _is_looping(chain, steps):
+    if not steps:
+        return False
+    # don't flag a read-only re-check as a loop (read_page, wait, screenshot alone)
+    if all(s.get("action") not in _MUTATING for s in steps):
+        return False
+    sig = _batch_sig(steps)
+    hist = loop_history.get(chain, [])
+    if sig in hist:
+        return True
+    hist.append(sig)
+    if len(hist) > 6:
+        del hist[0]
+    loop_history[chain] = hist
+    return False
+
+def _clear_loop(chain):
+    loop_history.pop(chain, None)
 
 # ── DESKTOP AGENT (local PC control) ───────────────────────────────────
 # Safety model: every step is classified. `safe` steps run automatically;
@@ -1387,8 +1424,14 @@ def browser_result():
             verdict = decide_next(task["command"], record["log"], record["page"])
             nxt = [] if verdict.get("done") else verdict.get("steps")
             if nxt:
-                enqueue_browser(task["command"], nxt, chain=chain)
-                tg(f"🔁 Browser: {len(nxt)} more actions queued for \"{task['command'][:40]}\"")
+                if _is_looping(chain, nxt):
+                    _clear_loop(chain)
+                    tg(f"🔄 Browser: stuck in a loop for \"{task['command'][:40]}\" — same steps repeating. I'm stopping.")
+                    finish_browser(chain, task["command"],
+                                  verdict.get("answer","") or "I kept repeating the same actions and couldn't make progress. Try rephrasing the request more specifically.")
+                else:
+                    enqueue_browser(task["command"], nxt, chain=chain)
+                    tg(f"🔁 Browser: {len(nxt)} more actions queued for \"{task['command'][:40]}\"")
             else:
                 finish_browser(chain, task["command"], verdict.get("answer",""))
         elif left == 0:
@@ -1474,20 +1517,27 @@ def desktop_result():
             code_iters[chain] = left - 1
             verdict = decide_code(task.get("command", ""), steps)
             if verdict.get("done"):
+                _clear_loop(chain)
                 ans = verdict.get("answer") or "Task complete."
                 desktop_answers.insert(0, {"command": task["command"], "answer": ans, "ts": time.time()})
                 del desktop_answers[10:]
                 safe = ans.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 tg(f"💻 <b>CODE RESULT, SIR</b>\n\n{safe[:2000]}")
             elif verdict.get("steps"):
-                nxt = enqueue_desktop(task["command"], verdict["steps"], label="code", chain=chain)
-                if nxt.get("status") == "queued":
-                    tg(f"💻 Code: {len(verdict['steps'])} more actions for \"{task['command'][:40]}\"")
-                elif nxt.get("status") == "pending":
-                    tg(f"💻 Code needs approval for the next step(s) of \"{task['command'][:40]}\" — Desktop page, Sir.")
+                if _is_looping(chain, verdict["steps"]):
+                    _clear_loop(chain)
+                    tg(f"🔄 Code: stuck in a loop for \"{task['command'][:40]}\" — same steps repeating. Stopping here.")
+                else:
+                    nxt = enqueue_desktop(task["command"], verdict["steps"], label="code", chain=chain)
+                    if nxt.get("status") == "queued":
+                        tg(f"💻 Code: {len(verdict['steps'])} more actions for \"{task['command'][:40]}\"")
+                    elif nxt.get("status") == "pending":
+                        tg(f"💻 Code needs approval for the next step(s) of \"{task['command'][:40]}\" — Desktop page, Sir.")
             else:
+                _clear_loop(chain)
                 tg(f"🏁 Code task stalled: \"{task['command'][:40]}\" — no next steps, Sir.")
         else:
+            _clear_loop(chain)
             tg(f"🏁 Code task stopped (iteration limit): \"{task['command'][:40]}\"")
 
     if errs and (not task or task.get("label") != "code"):

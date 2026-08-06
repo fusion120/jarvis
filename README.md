@@ -31,6 +31,19 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 - **Scheduled reminders** — the Reminders page lets you schedule a task with a date/time; Jarvis alerts you on Telegram when it's due.
 - **Canvas** — assignments auto-complete after the 2-hour window via the Telegram `CANVAS YES` → `SUBMIT` flow. The Canvas page's **Test Canvas** button confirms your token/domain are working.
 
+## Auto-skills (always on)
+
+Jarvis automatically applies the right skills to every reply — no buttons to click:
+
+- ✍️ **Humanize** — every reply: strips AI fingerprints (Blader methodology, 33 patterns) via a draft → self-audit → final rewrite loop that targets GPTZero/Burstiness/Perplexity detection.
+- 🧠 **Memory** — facts you tell Jarvis are recalled in every answer.
+- 🔍 **SEO** — essays/articles automatically get a title, heading outline, and keyword structure.
+- 🎨 **Design** — any landing page / UI request gets a real palette, fonts, and style.
+- 📈 **Marketing** — emails, sales copy, and offers get persuasion structure.
+- 🛡️ **Security** — code output is checked against OWASP basics.
+- 🧪 **TDD** — code requests include failing tests before implementation.
+- 📊 **Data** — numbers/data questions interpret actual values (mean, median, trend, outliers).
+
 ## Browser superpowers
 
 Jarvis can see and drive **all** your open tabs, not just the active one: `list_tabs`, `read_tab`/`switch_tab`/`close_tab` (by URL, title, or tab number), `go_back`/`go_forward`, `new_window`, `group_tabs` (auto-group tabs by topic), `save_session`/`restore_session` (save and reopen whole multi-tab sessions by voice), and `save_tab` (save the page you're on into the **Research Log**, shown on the Research page). Try: *"list my tabs"*, *"switch to the tab about X"*, *"group my tabs by project"*, *"save my session"*, or *"save this tab"*.
