@@ -10,7 +10,8 @@
     "storage",
     "notifications",
     "tabCapture",
-    "tabGroups"
+    "tabGroups",
+    "alarms"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

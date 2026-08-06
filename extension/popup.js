@@ -35,6 +35,10 @@ async function testConn() {
   const url = document.getElementById('url').value.trim().replace(/\/$/,'');
   if(!url) { showMsg('Enter your backend URL first', 'err'); return; }
 
+  // Wake the background worker so it (re)starts polling right away —
+  // otherwise a sleeping service worker ignores new commands until it wakes.
+  try { chrome.runtime.sendMessage({ type: 'WAKE' }); } catch(e) {}
+
   setDot('yellow', 'Testing...');
   showMsg('', '');
 

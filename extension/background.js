@@ -5,7 +5,6 @@ let BACKEND = '';
 let SECRET  = '';
 let connected = false;
 let currentTab = { url: '', title: '' };
-let polling = false;
 
 // ── LOAD SETTINGS ─────────────────────────────────────────────────────
 async function loadSettings() {
@@ -430,20 +429,48 @@ function waitForLoad(tabId) {
 
 // ── MESSAGE FROM POPUP ─────────────────────────────────────────────────
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg.type === 'GET_STATUS') {
+  if (msg.type === 'GET_STATUS' || msg.type === 'WAKE') {
+    pollLoop();  // Wakes/restarts polling when the user opens the popup or dashboard
     reply({ connected, currentTab, backend: BACKEND });
   }
   if (msg.type === 'SAVE_SETTINGS') {
     BACKEND = msg.backend.replace(/\/$/, '');
     SECRET  = msg.secret;
     chrome.storage.local.set({ jarvis_url: BACKEND, jarvis_secret: SECRET });
+    pollLoop();
     reply({ ok: true });
   }
   return true;
 });
 
 // ── START POLLING ─────────────────────────────────────────────────────
+// A self-sustaining loop (one poll at a time, then a fresh 2s timer) so
+// there's always a pending timer. chrome.alarms is the backstop: Chrome
+// force-kills MV3 service workers after ~5 min of continuous runtime, and
+// only an alarm (or a runtime message) can wake it again. The alarm fires
+// every 30s, so even after a kill, polling resumes within half a minute.
+let polling = false;
+async function pollLoop() {
+  if (polling) return;
+  polling = true;
+  try {
+    await poll();
+  } catch (e) {
+    connected = false;
+  } finally {
+    polling = false;
+  }
+  setTimeout(pollLoop, 2000);
+}
+
 (async () => {
   await loadSettings();
-  setInterval(poll, 2000);
+  pollLoop();
+  try {
+    chrome.alarms.create('jarvis-poll', { periodInMinutes: 0.5 });
+  } catch (e) {}
 })();
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'jarvis-poll') pollLoop();
+});
