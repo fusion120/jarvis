@@ -1131,7 +1131,8 @@ def api_skill(skill):
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
-    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir."})
+    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir.",
+                    "build":"search-guarantee-v2"})
 
 def search_web(q, top=5):
     """Quick web search for grounding: Google News RSS + DuckDuckGo Instant Answer."""
