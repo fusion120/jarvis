@@ -5,7 +5,7 @@ JARVIS BACKEND v3.0
 - Canvas: 2hr timer + Telegram approval flow
 - Outlook: Background polling every 10 min → Telegram summary + draft approval
 """
-import os, re, time, threading, requests, imaplib, smtplib, email as email_lib, json, uuid
+import os, sys, re, time, base64, tempfile, subprocess, threading, requests, imaplib, smtplib, email as email_lib, json, uuid
 from email.header import decode_header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -21,8 +21,10 @@ CORS(app, origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else "*",
      allow_headers=["Content-Type", "X-Jarvis-Token"])
 
 # ── CONFIG (all from Render env vars — never hardcode) ────────────────
-GROQ_KEY       = os.getenv("GROQ_API_KEY", "")
+GROQ_KEY       = os.getenv("GROQ_API_KEY", "").strip()  # strip trailing newline (Render env quirk)
 GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # free on console.groq.com
+GROQ_VISION    = os.getenv("GROQ_VISION_MODEL", "llama-3.2-90b-vision-preview")  # multimodal (image input)
+VISION_TTL     = int(os.getenv("VISION_TTL_SECS", "120"))   # how long a webcam analysis stays "current"
 API_SECRET     = os.getenv("API_SECRET", "")       # random string you set on Render
 TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "")
@@ -35,12 +37,18 @@ SMTP_SERVER    = os.getenv("SMTP_SERVER", "smtp.office365.com")
 POLL_SECS      = int(os.getenv("OUTLOOK_POLL_SECS", "600"))  # 10 min default
 DIGEST_TIME    = os.getenv("DIGEST_TIME", "12:00")  # HH:MM daily digest (UTC by default)
 DIGEST_TZ      = os.getenv("DIGEST_TZ", "+00:00")   # timezone offset, e.g. -05:00 for Houston (CT)
+# Full access: MIMO/Jarvis can run commands & write files anywhere on Mohamed's
+# PC with NO approval prompts. OS-fatal commands still hard-block (format,
+# diskpart, bcdedit, system-folder deletes) so a bad step can't brick Windows.
+FULL_ACCESS    = os.getenv("FULL_ACCESS", "0") == "1"
 
-SYSTEM = ("You are Jarvis — Mohamed's personal AI and right hand. Always call him Sir. "
+SYSTEM = ("You are Jarvis — Mohamed's personal AI assistant. "
           "He's a web design student and freelancer in Katy/Houston, TX building local business "
           "websites, and finishing up university on Canvas. "
           "Talk to him like a sharp, loyal friend who happens to know everything: warm, concise, "
           "a little dry humor when it fits, contractions are fine ('I'll', 'you're', 'that's'). "
+          "Be natural and human — NO honorifics, no 'sir this, sir that', no 'at your service' or "
+          "robotic pleasantries. Just talk like a smart friend. "
           "Use markdown. For business tasks be persuasive and professional. "
           "For math show every step of the work. "
           "Built-in skills you can apply instantly when asked: design systems and landing pages, "
@@ -69,11 +77,72 @@ CHAT_SYSTEM += ("\n\nYou can ALSO control Mohamed's PC through the Jarvis deskto
     "python script that renames all files in a folder to lowercase). Never add a tag line for pure chat "
     "questions, and never add more than one tag line per reply.")
 
+CHAT_SYSTEM += ("\n\nMohamed also has a physical ROBOT BUDDY on his desk — a pan-tilt Arduino head with an "
+    "OLED face, driven over USB by the desktop agent. When he asks you to make the buddy move or react — "
+    "'make jarvis look happy/sad/curious', 'look left/right/up/down', 'blink', 'say hi', "
+    "'beep', 'wake up' — do NOT explain how to do it yourself. Reply with one short acknowledgment line, "
+    "then END with exactly one tag line: [[ROBOT]]<short imperative> (e.g. [[ROBOT]]turn the head to look "
+    "left and show a curious face). Robot commands are quick: a head move + an expression + maybe a beep. "
+    "Never add a tag line for pure chat questions.")
+
+CHAT_SYSTEM += ("\n\nYou can ALSO LOOK AT Mohamed through his PC webcam. When he says 'look at me', "
+    "'look at the camera/webcam', 'what do you see?', 'can you see me?', or 'are you looking/watching' — "
+    "do NOT describe how. Reply with one short acknowledgment line, then END with exactly one tag line: "
+    "[[DESKTOP]]look at Mohamed and tell him what you see. (The agent captures one webcam frame and sends "
+    "the analysis here, so you'll actually know what he looks like.) Never combine a webcam tag with a "
+    "robot/browser/code tag in the same reply.")
+
 # ── SHARED STATE ──────────────────────────────────────────────────────
 pending          = {}   # approval_id → {type, data}
 assign_timers    = {}   # assignment_id → timer info
 seen_assignments = set()
 seen_emails      = set()
+
+# ── VISION STATE ─────────────────────────────────────────────────────
+vision_latest    = None   # {ts, emotion, gaze_target, objects_held, activity, scene_text, on_screen, look_desc, faces, dist}
+mimo_mood        = {"state": "neutral", "energy": 0.5, "ts": 0.0}   # MIMO's current mood
+mimo_memory      = []     # rolling episodic scene log: {ts, emotion, gaze_target, objects_held, scene_text}
+# Observation memory: MIMO's baseline of how Mohamed looks + when he's usually around.
+mimo_look        = {}     # {desc, ts} baseline appearance (hair, glasses, top) to diff against
+mimo_day         = ""     # last date Mohamed was seen (YYYY-MM-DD), for routine memory
+mimo_day_hour    = 12     # hour of the day's first sighting
+mimo_day_first   = False  # transient flag: set once on the day's first fresh sighting
+mimo_usual_hour  = None   # rolling average hour Mohamed usually shows up
+
+# ── MIMO CODING INTAKE ────────────────────────────────────────────────
+# Interactive "it asks details, I answer, it codes" flow. code_intake is one
+# open clarifying round; mimo_usb_pending is a fresh hardware-insert event the
+# proactive loop turns into an offer to help program the device.
+code_intake    = {}       # {active, task, answers[], ask_at}
+mimo_usb_pending = None   # {devices[], ts}
+MIMO_PERSONA     = {
+    "name": "MIMO",
+    "traits": ["curious", "attentive", "playful", "protective", "a little dramatic"],
+    "drives": ["watch over Mohamed", "notice what he's doing", "offer help before being asked",
+               "react honestly to his mood"],
+    "speaking_style": "short, warm, one line. Natural and unpretentious — no 'Sir'. Slightly playful, like a "
+                      "little companion that notices everything.",
+}
+
+MOOD_DRIFT = {
+    "happy":    +0.25, "excited": +0.25, "surprised": +0.15, "focused": +0.10,
+    "neutral":  0.0,
+    "tired":    -0.10, "sad": -0.20, "frustrated": -0.20, "angry": -0.25,
+}
+
+def _update_mood(analysis, now=None):
+    """Shift MIMO's mood from what it just saw, then ease back toward neutral."""
+    global mimo_mood
+    now = now or time.time()
+    drift = MOOD_DRIFT.get((analysis or {}).get("emotion", "neutral"), 0.0)
+    if now - mimo_mood["ts"] > 120:                 # fresh observation, not a stale echo
+        mimo_mood["energy"] = max(0.0, min(1.0, mimo_mood["energy"] + drift))
+        state = "neutral"
+        if mimo_mood["energy"] >= 0.75: state = "bright"
+        elif mimo_mood["energy"] >= 0.6:  state = "curious"
+        elif mimo_mood["energy"] <= 0.25: state = "low"
+        elif mimo_mood["energy"] <= 0.4:  state = "subdued"
+        mimo_mood.update(state=state, ts=now)
 
 # ── AUTH DECORATOR ────────────────────────────────────────────────────
 def auth(f):
@@ -123,17 +192,79 @@ def _groq_call(messages, system=None, max_tokens=2000, temperature=0.7):
         print(f"Groq API error: {e}{detail}")
         return None
 
+def analyze_webcam(image_b64, screenshot_b64=None, gaze=None):
+    """Send a webcam frame (and optionally a screenshot) to the Groq vision model.
+
+    Returns a structured dict: {emotion, gaze_target, objects_held, activity,
+    scene_text, on_screen} — or None on failure.
+    """
+    if not GROQ_KEY:
+        return None
+    if not image_b64 or len(image_b64) < 100:
+        return None
+    prompt = ("Analyze this webcam frame of Mohamed (the man in front of the camera) for MIMO, "
+              "his desktop robot companion. Respond with ONLY a JSON object, no prose, with these keys:\n"
+              "  emotion — one of: happy, sad, frustrated, stressed, tired, focused, excited, surprised, neutral, angry, asleep/absent\n"
+              "  gaze_target — where he is looking: screen, paper, away, mimo, phone, other, none (if no face)\n"
+              "  objects_held — list of objects in his hands/near him he seems to be using (may be empty)\n"
+              "  activity — 3-6 word description of what he appears to be doing\n"
+              "  scene_text — one short sentence describing the scene (who/what/doing)\n"
+              "  look_desc — Mohamed's current appearance, one short phrase: hair style/length, glasses yes/no, and top (shirt) color, e.g. 'short dark hair, no glasses, gray t-shirt' (empty if no clear face)\n"
+              "If a screenshot is also attached, add: on_screen — a short phrase describing what is on his "
+              "screen that he is likely reading (title, document type, or app). Keep all values short.")
+    content = [
+        {"type": "text", "text": prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}},
+    ]
+    if screenshot_b64 and len(screenshot_b64) > 100:
+        content.append({"type": "text", "text": "And here is his screen:"})
+        content.append({"type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{screenshot_b64}"}})
+    headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+    body = {"model": GROQ_VISION, "max_tokens": 500,
+            "temperature": 0.2,
+            "messages": [{"role": "user", "content": content}]}
+    try:
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                          headers=headers, json=body, timeout=60)
+        r.raise_for_status()
+        data = r.json()
+        text = data["choices"][0]["message"]["content"].strip()
+        obj = _json_or_none(text)
+        if obj and isinstance(obj, dict):
+            return {
+                "emotion": str(obj.get("emotion") or "neutral"),
+                "gaze_target": str(obj.get("gaze_target") or "other"),
+                "objects_held": obj.get("objects_held") or [],
+                "activity": str(obj.get("activity") or ""),
+                "scene_text": str(obj.get("scene_text") or text[:300]),
+                "on_screen": str(obj.get("on_screen") or ""),
+                "look_desc": str(obj.get("look_desc") or ""),
+            }
+        return {"emotion": "neutral", "gaze_target": "other", "objects_held": [],
+                "activity": "", "scene_text": text[:300], "on_screen": "", "look_desc": ""}
+    except Exception as e:
+        detail = ""
+        if hasattr(e, "response") and e.response is not None:
+            try:
+                detail = " | " + e.response.text[:500]
+            except Exception:
+                pass
+        print(f"Groq vision error: {e}{detail}")
+        return None
+
+
 def ask(messages, system=None, max_tokens=2000, temperature=0.7):
     """Free-form text completion via Groq (with Jarvis's remembered facts injected)."""
     if not GROQ_KEY:
-        return "GROQ_API_KEY not set on Render, Sir. Add it in Environment Variables."
+        return "GROQ_API_KEY not set on Render. Add it in Environment Variables."
     sys = system or SYSTEM
     if memory_store:
         mem = "\n".join("- " + m["fact"] for m in memory_store[-20:])
         sys = sys + "\n\nThings you remember about Mohamed (use when relevant):\n" + mem
     text = _groq_call(messages, system=sys,
                       max_tokens=max_tokens, temperature=temperature)
-    return text if text is not None else "AI error, Sir."
+    return text if text is not None else "AI error."
 
 # ── TELEGRAM ──────────────────────────────────────────────────────────
 def tg(msg):
@@ -217,7 +348,7 @@ def get_emails(top=15):
 
 def send_email(to, subject, body, reply_id=None):
     if not OUTLOOK_EMAIL or not OUTLOOK_PASS:
-        return False, "Outlook not configured, Sir."
+        return False, "Outlook not configured."
     try:
         msg = MIMEMultipart()
         msg["From"]    = OUTLOOK_EMAIL
@@ -229,7 +360,7 @@ def send_email(to, subject, body, reply_id=None):
             server.starttls()
             server.login(OUTLOOK_EMAIL, OUTLOOK_PASS)
             server.sendmail(OUTLOOK_EMAIL, to, msg.as_string())
-        return True, "Sent, Sir."
+        return True, "Sent."
     except Exception as e:
         return False, f"Send failed: {e}"
 
@@ -240,7 +371,7 @@ def canvas(path):
         r = requests.get(f"https://{CANVAS_DOM}/api/v1{path}",
                          headers={"Authorization": f"Bearer {CANVAS_TOK}"}, timeout=15)
         if r.status_code == 401:
-            tg("⚠️ <b>Canvas token expired, Sir.</b> Please renew it.")
+            tg("⚠️ <b>Canvas token expired.</b> Please renew it.")
             return None
         return r.json()
     except: return None
@@ -285,7 +416,7 @@ def start_timer(a):
         time.sleep(7200)  # 2 hours
         if aid not in assign_timers: return
         assign_timers[aid]["status"] = "ready"
-        tg(f"📚 <b>ASSIGNMENT READY, SIR</b>\n\n"
+        tg(f"📚 <b>ASSIGNMENT READY</b>\n\n"
            f"<b>Course:</b> {a['course']}\n"
            f"<b>Title:</b> {a['title']}\n"
            f"<b>Due:</b> {a.get('due','?')}\n\n"
@@ -302,7 +433,7 @@ def canvas_loop():
                 if aid not in seen_assignments:
                     seen_assignments.add(aid)
                     start_timer(a)
-                    tg(f"🎓 <b>NEW ASSIGNMENT, SIR</b>\n\n"
+                    tg(f"🎓 <b>NEW ASSIGNMENT</b>\n\n"
                        f"<b>Course:</b> {a['course']}\n"
                        f"<b>Title:</b> {a['title']}\n"
                        f"<b>Due:</b> {a.get('due','?')}\n"
@@ -334,7 +465,7 @@ def outlook_loop():
                 draft   = ask([{"role":"user","content":f"Write a short professional reply. Sign as Mohamed.\nFrom: {fname}\nSubject: {subj}\n\n{body}"}],
                               system="You are Jarvis writing a reply for Mohamed. Be professional and concise.")
 
-                tg(f"📧 <b>NEW EMAIL, SIR</b>\n\n"
+                tg(f"📧 <b>NEW EMAIL</b>\n\n"
                    f"<b>From:</b> {fname} &lt;{faddr}&gt;\n"
                    f"<b>Subject:</b> {subj}\n"
                    f"<b>Received:</b> {recv}\n\n"
@@ -343,7 +474,7 @@ def outlook_loop():
                 pid = f"email_{eid}"
                 pending[pid] = {"type":"email","to":faddr,"subject":f"Re: {subj}","body":draft,"email_id":eid}
                 time.sleep(1)
-                tg(f"📝 <b>DRAFT REPLY READY, SIR</b>\n\n"
+                tg(f"📝 <b>DRAFT REPLY READY</b>\n\n"
                    f"<b>To:</b> {fname}\n"
                    f"<b>Subject:</b> Re: {subj}\n\n"
                    f"{draft[:800]}{'...' if len(draft)>800 else ''}\n\n"
@@ -356,7 +487,7 @@ def outlook_loop():
 # in Chrome, then posts results back. Tasks can be explicit step lists or
 # natural-language commands (AI plans steps, then re-plans until done).
 KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
-                 "click_text","click_selector","type_selector","type_label",
+                 "click_text","click_selector","type_selector","type_label","type",
                  "search","run_js","scroll","wait","press_key",
                  "list_tabs","read_tab","switch_tab","close_tab",
                  "go_back","go_forward","new_window","group_tabs",
@@ -388,6 +519,11 @@ desktop_pending   = []          # tasks awaiting Mohamed's approval {id, command
 desktop_delivered = set()       # task ids already handed out (runs-once guard)
 desktop_last_seen = 0.0         # epoch seconds of the agent's last poll
 desktop_workspace = ""          # agent's workspace, reported via X-Jarvis-Workspace header
+
+# ── ROBOT (ESP32-C3 QBIT body, polls directly) ────────────────
+robot_queue       = []          # commands waiting for the ESP32
+robot_last_seen   = 0.0         # epoch of last robot poll
+robot_results     = {}          # recent command results
 desktop_answers   = []          # recent finished results {command, answer, ts}
 code_iters        = {}          # coding task_id → iterations left
 loop_history      = {}          # chain → list of recent step-batch signatures
@@ -402,12 +538,16 @@ def persist():
         os.makedirs(PERSIST_DIR, exist_ok=True)
         with open(PERSIST_FILE, "w", encoding="utf-8") as f:
             json.dump({"research_log": research_log, "memory": memory_store,
-                       "reminders": REMINDERS}, f, ensure_ascii=False)
+                       "reminders": REMINDERS, "mimo_mood": mimo_mood,
+                       "mimo_memory": mimo_memory, "mimo_look": mimo_look,
+                       "mimo_day": mimo_day, "mimo_day_hour": mimo_day_hour,
+                       "mimo_usual_hour": mimo_usual_hour}, f, ensure_ascii=False)
     except Exception as e:
         print("persist err", e)
 
 def load_persist():
-    global research_log, memory_store, REMINDERS
+    global research_log, memory_store, REMINDERS, mimo_mood, mimo_memory, mimo_look
+    global mimo_day, mimo_day_hour, mimo_usual_hour
     try:
         if os.path.exists(PERSIST_FILE):
             with open(PERSIST_FILE, "r", encoding="utf-8") as f:
@@ -415,6 +555,12 @@ def load_persist():
             if isinstance(d.get("research_log"), list): research_log = d["research_log"]
             if isinstance(d.get("memory"), list):       memory_store = d["memory"]
             if isinstance(d.get("reminders"), list):    REMINDERS = d["reminders"]
+            if isinstance(d.get("mimo_mood"), dict):    mimo_mood = d["mimo_mood"]
+            if isinstance(d.get("mimo_memory"), list):  mimo_memory = d["mimo_memory"][-200:]
+            if isinstance(d.get("mimo_look"), dict):    mimo_look = d["mimo_look"]
+            if isinstance(d.get("mimo_day"), str):      mimo_day = d["mimo_day"]
+            if isinstance(d.get("mimo_day_hour"), int): mimo_day_hour = d["mimo_day_hour"]
+            if isinstance(d.get("mimo_usual_hour"), int): mimo_usual_hour = d["mimo_usual_hour"]
     except Exception as e:
         print("load persist err", e)
 
@@ -427,6 +573,7 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"click_selector","selector":"css selector"}
 - {"action":"type_selector","selector":"css selector","value":"text"}
 - {"action":"type_label","label":"input label or placeholder","value":"text"}
+- {"action":"type","value":"text"} — type into the field that is CURRENTLY FOCUSED (regular inputs, textareas, and contenteditable editors like Gmail/X)
 - {"action":"search","query":"text to search the site's own search box"}
 - {"action":"scroll","y":500}
 - {"action":"wait","ms":1000}
@@ -434,6 +581,8 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"run_js","code":"return document.title"}
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
 There is NO "play" action. To play a video/song: open the site, read_page, then {"action":"click_text","text":"<a video title>"} to start it. For "a random video/song", click the first video/song title you see on the page. For "a video about X", search for X first, then click the top result.
+When the user asks you to TYPE, WRITE, ENTER, or SEND text (a chat message, a comment, a form field, an email draft): actually do it — select the field, then use {"action":"type","value":"..."} if it is already focused, otherwise {"action":"type_label","label":"...","value":"..."} or {"action":"type_selector","selector":"...","value":"..."} to target it. Typing works on inputs, textareas, AND contenteditable editors (Gmail, X/Twitter, Notion-style). To submit, press Enter with {"action":"press_key","key":"Enter"} or click the send button. Do NOT just describe the text or give up — type it for real.
+For BEST / RECOMMEND / COMPARISON tasks ("best X under $Y", "top-rated X", "recommend a good X"): do REAL multi-source research. Run the search on 2-3 different sites (Google, plus a review/forum site, plus the official or manufacturer site), read the pages, and compare at least 3-4 specific named models. The final answer must name actual products you saw — model name, approximate price, 1-2 key features each, and the source URL. Never invent product names, prices, or specs; if you only found one solid source, say so and still name what you found.
 {"action":"read_page"} returns the page's visible text (up to ~12k chars) AND up to 80 links with their titles — scan those links to choose what to click.
 TO FIND something the user asked for, keep going until you actually see it: search the site, read_page, and scan the links it returns. If the answer is not on the page yet, scroll down ({"action":"scroll","y":800} triggers lazy-loaded content on feeds and infinite-scroll sites), read_page again, and click "Next" / "Load more" / page numbers to move through result pages. You may batch several commands at once: search → wait → read_page → scroll → click. Do NOT give up after one page — work through several pages or refine the search before declaring failure.
 When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests.
@@ -631,7 +780,7 @@ def finish_browser(chain, command, answer):
     browser_answers.insert(0, {"command": command, "answer": answer, "ts": time.time()})
     del browser_answers[10:]
     safe = answer.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
-    tg(f"📋 <b>BROWSER RESULT, SIR</b>\n\n{safe[:3000]}")
+    tg(f"📋 <b>BROWSER RESULT</b>\n\n{safe[:3000]}")
 
 def enqueue_browser(command, steps, chain=None):
     task = {"id": str(uuid.uuid4())[:8], "command": command,
@@ -644,7 +793,7 @@ def enqueue_browser(command, steps, chain=None):
 # re-clicking the same result, code re-running the same failing file write).
 # Pure read-only rechecks (lone read_page/wait) are not counted as loops.
 _MUTATING = {"new_tab","navigate","click_text","click_selector","search",
-             "type_selector","type_label","write_file","edit_file","run_command",
+             "type_selector","type_label","type","write_file","edit_file","run_command",
              "execute_code","press_key","run_js"}
 
 def _batch_sig(steps):
@@ -680,8 +829,12 @@ def _clear_loop(chain):
 # the task is ever handed to the agent; `block` steps are rejected outright.
 DESKTOP_SAFE_ACTIONS = {
     "open_app", "list_files", "read_file", "find_file", "get_system_info",
-    "get_network_info", "network_scan", "screenshot", "list_windows",
+    "get_network_info", "network_scan", "screenshot", "capture_webcam", "list_windows",
     "list_printers", "list_usb", "list_displays", "get_clipboard",
+    # Jarvis Buddy (robot/) — servos/OLED/buzzer are physical but harmless.
+    "robot_head", "robot_eyes", "robot_blink", "robot_blip", "robot_say", "robot_status",
+    # MIMO — proactive speech: desktop says a line + popup; harmless.
+    "mimo_say",
 }
 DESKTOP_APPROVE_ACTIONS = {
     "set_clipboard", "write_file", "edit_file", "delete_file", "delete_folder",
@@ -727,6 +880,25 @@ def _in_workspace(path):
 def classify_desktop_step(step):
     """Return 'safe', 'approve', or 'block' for one desktop step."""
     act = (step or {}).get("action", "")
+    # Full access: approvals off — run/write anywhere. Only OS-fatal commands
+    # (format, diskpart, bcdedit, recursive system deletes) still hard-block.
+    if FULL_ACCESS:
+        if act == "run_command":
+            low = str((step or {}).get("command") or "").strip().lower()
+            if not low or DESKTOP_BLOCKED_RE.search(low):
+                return "block"
+            return "safe"
+        if act == "execute_code":
+            if DESKTOP_BLOCKED_RE.search(str((step or {}).get("code") or "").lower()):
+                return "block"
+            return "safe"
+        if act in ("delete_file", "delete_folder"):
+            p = _norm_path((step or {}).get("path", ""))
+            if any(p.lower().startswith(d.lower() + os.sep) or p.lower() == d.lower()
+                   for d in DESKTOP_SYSTEM_DIRS):
+                return "block"               # never delete system folders — even in full access
+            return "safe"
+        return "safe"
     if act == "run_command":
         low = str((step or {}).get("command", "") or "").strip().lower()
         if not low:
@@ -765,6 +937,7 @@ DESKTOP_ACTIONS = """Return a JSON object with a "steps" array (1-8 steps) of ac
 - {"action":"get_network_info"} — ipconfig / active connections / ping a host
 - {"action":"network_scan"} — list devices on the local network
 - {"action":"screenshot"} — capture the screen
+- {"action":"capture_webcam"} — grab one frame from Mohamed's webcam so Jarvis can see him (safe)
 - {"action":"list_windows"} — open application windows
 - {"action":"list_printers"} / {"action":"list_usb"} / {"action":"list_displays"} — hardware inventory
 - {"action":"get_clipboard"} / {"action":"set_clipboard","text":"..."}
@@ -790,6 +963,130 @@ Write real, working code. After writing, run it and iterate on any errors until 
 
 CODE_MAX_ITERS = 8
 
+# "Train it to code" for real hardware — the flashing playbook MIMO uses when
+# Mohamed plugs in an Arduino / ESP32 / Raspberry Pi. Full paths are fine.
+HARDWARE_HELP = """Programming real hardware Mohamed plugs in — use these playbooks:
+- PlatformIO (ESP32/Arduino projects, incl. this repo's robot firmware): cd to the project dir then `pio run --target upload`. List ports first: `pio device list`.
+- arduino-cli (classic AVR): `arduino-cli compile --fqbn arduino:avr:uno <sketch>` then `arduino-cli upload -p <COM> --fqbn arduino:avr:uno <sketch>`.
+- Raspberry Pi: it's a Linux box — write Python and run it over SSH (`ssh pi@<host> python3 -u script.py`), or copy files with scp. Do NOT try to flash a Pi over serial.
+- Find the serial port first: run `python -c "import serial.tools.list_ports as p; [print(x.device, x.description) for x in p.comports()]"`.
+- Run every command with an explicit `cwd` when it must happen in a firmware/project folder, e.g. {"action":"run_command","command":"pio run --target upload","cwd":"C:\\...\\firmware"}.
+- You may write files anywhere (full access is on). Write real code, RUN it, then fix errors automatically and re-run until it works."""
+
+# ── CODING PLAYBOOK LIBRARY ───────────────────────────────────────────
+# On-demand "training": backend/skills/coding/*.md are real scenarios with
+# working examples. When Mohamed asks for code, the task's keywords select the
+# best-matching 1-2 playbooks and only those are injected — no prompt bloat.
+CODING_PLAYBOOK_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills", "coding")
+
+# Tokens from keyword phrases that would otherwise match any sentence
+# (e.g. "and" in "drag and drop" hitting "commit and push my code").
+# Tokens from keyword phrases that would otherwise match any sentence
+# (e.g. "and" in "drag and drop" hitting "commit and push my code", or the
+# word "code"/"write" which appears in nearly every task and adds no signal).
+_PLAYBOOK_STOP = {"a", "an", "and", "are", "as", "at", "be", "by", "for",
+                  "from", "in", "is", "it", "of", "on", "or", "that", "the",
+                  "this", "to", "with", "my", "your", "our", "i", "you",
+                  "code", "program", "script", "app", "application", "use",
+                  "make", "write", "build", "create", "need", "want", "simple"}
+
+def _load_playbooks():
+    lib = {}
+    try:
+        if not os.path.isdir(CODING_PLAYBOOK_DIR):
+            return lib
+        for fn in sorted(os.listdir(CODING_PLAYBOOK_DIR)):
+            if not fn.endswith(".md") or fn.lower() == "readme.md":
+                continue
+            try:
+                with open(os.path.join(CODING_PLAYBOOK_DIR, fn), encoding="utf-8") as f:
+                    raw = f.read()
+            except Exception:
+                continue
+            fm = re.match(r"^---\s*\n(.*?)\n---\s*\n", raw, re.S)
+            if not fm:
+                continue
+            head, text = fm.group(1), raw[fm.end():].strip()
+            lm = re.search(r"lang:\s*([^\n]+)", head)
+            lang = lm.group(1).strip().lower() if lm else "general"
+            kwm = re.search(r"keywords:\s*([^\n]+)", head)
+            kws = []
+            if kwm:
+                for k in kwm.group(1).split(","):          # split multi-word keywords
+                    for tok in k.strip().lower().split():  # into single-word tokens
+                        if tok and tok not in kws and tok not in _PLAYBOOK_STOP:
+                            kws.append(tok)
+            lib[fn[:-3]] = {"keywords": kws, "lang": lang, "text": text}
+    except Exception as e:
+        print("playbook load err", e)
+    return lib
+
+CODING_PLAYBOOKS = _load_playbooks()
+
+# Language detection: explicit language names win outright (so "java program
+# that reads a csv" is Java, not Python); weaker hints only break ties when
+# no language is named. When a language is detected, only playbooks for that
+# language (plus 'general') compete, so a 200-file library stays precise.
+STRONG_LANG = [
+    ("javascript", r"\b(javascript|typescript|node|nodejs|react|vue|angular)\b"),
+    ("java", r"\b(java|javac|jvm|spring|maven|gradle|junit)\b"),
+    ("python", r"\b(python|pip|django|flask|pandas|numpy|scrapy|pytest)\b"),
+    ("html", r"\b(html|css)\b"),
+    ("cpp", r"\b(c\+\+|arduino|esp32|platformio|wiring)\b"),
+    ("sql", r"\b(sql|sqlite|postgres|mysql)\b"),
+    ("bash", r"\b(bash|powershell|shell script)\b"),
+    ("git", r"\b(git|github)\b"),
+]
+WEAK_LANG = {
+    "python": r"\b(csv|json|scrape|os module)\b",
+    "sql": r"\b(database|query|table)\b",
+    "bash": r"\b(cmd)\b",
+}
+
+def _detect_lang(task):
+    """Best-guess language from the task text, or None if ambiguous."""
+    low = (task or "").lower()
+    for lang, pat in STRONG_LANG:          # explicit language name -> wins
+        if re.search(pat, low):
+            return lang
+    best, best_n = None, 0                 # else count weaker hints
+    for lang, pat in WEAK_LANG.items():
+        n = len(re.findall(pat, low))
+        if n > best_n:
+            best, best_n = lang, n
+    return best  # None -> match across all languages
+
+def _pick_playbooks(task, max_n=3):
+    """Best-matching playbooks for a coding task, by keyword overlap.
+    Word-boundary matching (plural-aware, so 'file' matches 'files') keeps
+    'led' from hitting inside 'oled' and 'os' inside 'sensor'. Longer,
+    more distinctive keywords weigh more than short generic ones, and
+    keywords in the playbook's own filename score double — so 'websocket'
+    outranks generic 'node' for a websocket task. When the task names a
+    language, only playbooks for that language (plus 'general') compete."""
+    low = (task or "").lower()
+    lang = _detect_lang(task)
+    scored = []
+    for name, pb in CODING_PLAYBOOKS.items():
+        if lang and pb.get("lang", "general") not in ("general", lang):
+            continue
+        name_toks = set(name.replace("-", " ").split())
+        s = 0
+        for k in pb["keywords"]:
+            if k and re.search(r"\b" + re.escape(k) + r"(?:s|es)?\b", low):
+                s += (2 if k in name_toks else 1) * (1 + len(k) // 3)
+        if s:
+            scored.append((s, name, pb["text"]))
+    scored.sort(key=lambda x: -x[0])
+    return [(name, text) for _, name, text in scored[:max_n]]
+
+def _playbook_block(command):
+    refs = _pick_playbooks(command)
+    if not refs:
+        return ""
+    return ("\n\nRELEVANT SCENARIOS — study these and apply their patterns to the task:\n"
+            + "\n\n".join(f"===== {name} =====\n{text}" for name, text in refs))
+
 def _clean_desktop_steps(obj):
     steps = []
     for s in ((obj or {}).get("steps") or []):
@@ -805,7 +1102,8 @@ def plan_desktop(command):
     return _clean_desktop_steps(obj)
 
 def plan_code(command):
-    obj = ask_json("You are Jarvis coding for Mohamed. " + CODE_ACTIONS + "\n" +
+    obj = ask_json("You are MIMO coding for Mohamed (keep the warm tone in progress notes). "
+                   + CODE_ACTIONS + "\n" + HARDWARE_HELP + _playbook_block(command) + "\n" +
                    SKILL_GUIDELINES["security"] + " " + SKILL_GUIDELINES["tdd"], f"Task: {command}")
     return _clean_desktop_steps(obj)
 
@@ -830,10 +1128,11 @@ def enqueue_desktop(command, steps, label="desktop", chain=None):
 
 def decide_code(command, log):
     """Given coding steps + outputs so far, decide done or next steps."""
-    system = ("You are Jarvis completing a coding task for Mohamed. Given the goal, the steps run and their "
+    system = ("You are MIMO completing a coding task for Mohamed. Given the goal, the steps run and their "
               "outputs, decide whether the task is done. Done → {\"done\": true, \"answer\": \"<what you built and "
               "how to run it>\"}. Otherwise → {\"done\": false, \"steps\": [1-5 actions]} to fix errors and continue. "
-              + CODE_ACTIONS + "\n" + SKILL_GUIDELINES["security"] + " " + SKILL_GUIDELINES["tdd"])
+              + CODE_ACTIONS + "\n" + HARDWARE_HELP + _playbook_block(command) + "\n" +
+              SKILL_GUIDELINES["security"] + " " + SKILL_GUIDELINES["tdd"])
     user = f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-12:], indent=1)[:4000]}"
     obj = ask_json(system, user)
     if not obj:
@@ -842,11 +1141,52 @@ def decide_code(command, log):
         return {"done": True, "answer": (obj.get("answer") or "").strip()}
     return {"done": False, "steps": _clean_desktop_steps(obj)}
 
+# ── ROBOT BUDDY (Arduino pan-tilt head + OLED face, over USB via desktop agent)
+ROBOT_ACTIONS = """Return a JSON object with a "steps" array (1-3 steps) of commands for Mohamed's Jarvis EV robot (ESP32-C3 with an OLED face, touch sensor, and speaker). Allowed actions:
+- {"action":"eye","expression":"happy"} — OLED face: idle, happy, sad, curious, sleep, x, talk (animated mouth)
+- {"action":"eye","expression":"blink"} — one quick blink
+- {"action":"eye","expression":"talk"} — mouth animates while MIMO speaks (~3s), then back to idle
+- {"action":"blip","freq":880,"ms":80} — buzzer/speaker tone
+- {"action":"status"} — heartbeat
+Choose a natural, expressive combo (e.g. happy face + a chime). Default to idle unless an emotion is asked for. Keep it to 1-3 steps."""
+
+def plan_robot(command):
+    obj = ask_json("You are Jarvis animating Mohamed's robot buddy. " + ROBOT_ACTIONS,
+                   f"Task: {command}")
+    return _clean_desktop_steps(obj)
+
+def enqueue_robot(command, steps):
+    """Queue commands for the ESP32 robot (always safe, no approval)."""
+    task = {"id": str(uuid.uuid4())[:8], "command": command, "steps": steps,
+            "label": "robot", "ts": time.time()}
+    robot_queue.append(task)
+    return task
+
+# Robot intent fallback (the Arduino buddy). Checked before desktop/browser so
+# "make jarvis look happy" / "blink" route to the robot, not a browser search.
+ROBOT_RE = re.compile(
+    r"\b(jarvis|buddy|the robot|him|it)\b[^.!?\n]{0,60}\b(look|turn|face|blink|wave|nod|tilt|"
+    r"happy|sad|curious|sleep|say|beep)\b|"
+    r"\b(blink|nod|wave|say hi|say hello|wake up|"
+    r"make (him|it|jarvis|the robot|buddy) (look )?(happy|sad|curious|sleep|angry|surprised))\b",
+    re.I)
+
+def _is_robot_cmd(msg):
+    if not msg:
+        return False
+    low = msg.lower()
+    # "look up the weather / news / a price" is a browser search, not a head move.
+    if re.search(r"look\s+up\s+(?:for\s+|the\s+|a\s+)?(?:weather|news|price|info|information|how|what|where|when|latest|results|definition|video|tutorial)", low):
+        return False
+    return bool(ROBOT_RE.search(low))
+
 # Fallback intent detection: if the model didn't emit [[BROWSER]], still
 # dispatch when the user's message is clearly a browser action.
 BROWSER_RE = re.compile(
-    r"\b(open|go to|navigate|browse|visit|search|look up|google|scroll|click|type in|"
-    r"open on|go on|find on|search on|scrape|collect)\b", re.I)
+    r"\b(open|go to|navigate|browse|visit|search|look up|look for|google|scroll|click|type in|"
+    r"recommend(ations?)?|"
+    r"open on|go on|find on|search on|scrape|collect|"
+    r"best\b.*\bunder\b)\b", re.I)
 
 # Desktop intent (PC actions the browser can't do). Checked BEFORE the
 # browser fallback so "open notepad" → desktop, "open youtube" → browser.
@@ -857,7 +1197,9 @@ DESKTOP_RE = re.compile(
     r"printers|usb|displays|devices)|read (a |the )?(file|folder)|find (a |the |my )?(file|folder)|"
     r"screenshot|system info|system information|network info|delete (a |the )?(file|folder)|"
     r"create (a |the )?(file|folder)|write (a |the )?file|clipboard|install (a |the )?(app|program)|"
-    r"shutdown|restart (the )?pc|print (a |this )?file|what's on (my |the )?(desktop|screen))\b", re.I)
+    r"shutdown|restart (the )?pc|print (a |this )?file|what's on (my |the )?(desktop|screen)|"
+    r"(look|see) (at |into |in )?(the )?(webcam|camera)|look at me|what do (you|u) see|"
+    r"(are you|r u) (looking|watching)|can you (see|look at) me)\b", re.I)
 
 # Coding intent — "write/build/make/fix" code in the workspace.
 CODE_RE = re.compile(
@@ -1003,7 +1345,7 @@ def humanize_text(text):
     draft = ask([{"role": "user", "content": src}], system=HUMANIZER_SYSTEM,
                 max_tokens=2400, temperature=0.9)
     draft = _strip_preamble(draft or "")
-    if len(draft) < 100 or draft.lower() == "ai error, sir.":
+    if len(draft) < 100 or draft.lower() == "ai error.":
         return None
 
     # 2) AUDIT — cheap self-critique of the draft
@@ -1029,7 +1371,7 @@ def humanize_text(text):
         final = _strip_preamble(final or "")
 
     final = _deterministic_humanize(final)
-    if len(final) < 100 or final.lower() == "ai error, sir.":
+    if len(final) < 100 or final.lower() == "ai error.":
         return None
     return final
     """Compute quick statistics from numbers found in the text. Returns str or None."""
@@ -1096,7 +1438,7 @@ def api_memory():
     f = (request.json or {}).get("fact", "").strip()
     if request.method == "POST":
         if not f:
-            return jsonify({"error": "No fact to remember, Sir."}), 400
+            return jsonify({"error": "No fact to remember."}), 400
         memory_store.append({"id": str(uuid.uuid4())[:8], "fact": f[:400], "ts": time.time()})
         del memory_store[100:]
         persist()
@@ -1111,28 +1453,28 @@ def api_memory():
 def api_skill(skill):
     prompt = SKILL_PROMPTS.get(skill)
     if not prompt:
-        return jsonify({"error": "Unknown skill, Sir."}), 404
+        return jsonify({"error": "Unknown skill."}), 404
     text = ((request.json or {}).get("text") or "").strip()
     if not text:
-        return jsonify({"error": "No input, Sir."}), 400
+        return jsonify({"error": "No input."}), 400
     if skill == "analyze":
         stats = analyze_data(text)
         if not stats:
-            return jsonify({"error": "I need a list of numbers (one per line), Sir."}), 400
+            return jsonify({"error": "I need a list of numbers (one per line)."}), 400
         res = ask([{"role": "user", "content": f"Dataset:\n{text[:4000]}\n\nComputed statistics:\n{stats}\n\nInterpret these statistics."}],
                   system=prompt, max_tokens=1500)
-        return jsonify({"result": res or "AI error, Sir.", "stats": stats})
+        return jsonify({"result": res or "AI error.", "stats": stats})
     if skill == "seo" and text.startswith(("http://", "https://")):
         a = audit_url(text)
         if a:
             text += "\n\nLIVE ON-PAGE AUDIT (fetched now):\n" + json.dumps(a, indent=2, default=str)[:1500]
     res = ask([{"role": "user", "content": text[:6000]}], system=prompt, max_tokens=1800)
-    return jsonify({"result": res or "AI error, Sir."})
+    return jsonify({"result": res or "AI error."})
 
 # ── ROUTES ────────────────────────────────────────────────────────────
 @app.route("/")
 def health():
-    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online, Sir.",
+    return jsonify({"status":"online","model":GROQ_MODEL,"message":"Jarvis online.",
                     "build":"search-guarantee-v3"})
 
 def search_web(q, top=5):
@@ -1161,14 +1503,114 @@ def search_web(q, top=5):
 # but skip browser commands, code, and long rambles.
 GROUND_RE     = re.compile(r"\b(who|what|why|when|where|how|is|are|was|does|did|can|will|should|current|latest|news|today|tomorrow|price|cost|weather|score|results?|status|update)\b", re.I)
 
+# A short, referential message ("what are its features?", "how about that one?")
+# right after a research task → don't re-ground with news junk, answer from the
+# research result we inject into the chat context below.
+_FOLLOWUP_RE = re.compile(r"^\s*(what|which|is it|does it|can it|how about|and|also|tell me more|features?|price|cost|specs?|the (first|second|third|one|best|winner)|that one|this one|it|that)\b[^,;]{0,50}\??\s*$", re.I)
+
+def _is_followup(msg):
+    return bool(_FOLLOWUP_RE.match(msg.strip()))
+
+# ── CHART GENERATION ──────────────────────────────────────────────────
+# "make a bar chart of ...", "visualize these numbers", "graph my sales"
+# → the model writes a small matplotlib script, we run it in a timed
+# subprocess, and return the PNG (base64) so it renders in any client.
+CHART_RE = re.compile(
+    r"\b(?:make|show|draw|create|build|plot|give me|visuali[sz]e)\b[^.\n]{0,60}\b(chart|graph|plot|histogram|pie|bar)\b"
+    r"|\b(chart|graph|histogram|pie|bar)\b[^.\n]{0,40}\b(data|month|week|day|sales|trend|compare|for|of|by|over|numbers|values)\b"
+    r"|\b(?:plot|visuali[sz]e)\b[^.\n]{0,40}\b(data|month|week|day|sales|trend|compare|numbers|values|results|growth|stock)\b", re.I)
+
+# "make it a pie chart", "use red bars", "show percentages" right after a chart
+_CHART_FOLLOWUP_RE = re.compile(
+    r"\b(pie|bar chart|line chart|line graph|scatter|histogram|percentage|percent|"
+    r"color|colour|axis|legend|title|instead|redraw|make it|change it|bigger|smaller|"
+    r"horizontal|vertical|rotate|the chart|that chart)\b", re.I)
+
+last_chart = None   # {"request": original request} so "make it a pie chart instead" reuses the data
+
+def _chart_request(msg):
+    if CHART_RE.search(msg):
+        return True
+    return bool(last_chart) and len(msg) <= 90 and _CHART_FOLLOWUP_RE.search(msg)
+
+# Only plotting libs — reject scripts that try to touch the system.
+_BLOCKED_IMPORT = re.compile(r"^\s*(import|from)\s+(os|sys|subprocess|socket|requests|urllib|http|shutil|pathlib|glob|sqlite3)\b", re.M)
+
+def _chart_prompt(msg):
+    p = ("Generate a matplotlib chart for this request:\n" + msg +
+         "\n\nRULES: output ONE self-contained Python script in a ```python code block, followed by a line "
+         "starting with CAPTION: describing the chart in one line. Use only matplotlib.pyplot (pandas and "
+         "numpy are allowed). Extract the data from the request if it has numbers or labels. If the request "
+         "has NO data to plot, output exactly NEED_DATA. Never read files, never use the network, never call "
+         "plt.show() (the save path is appended for you). Make it clean: title, axis labels, legend when "
+         "multiple series.")
+    if last_chart:
+        p += "\n\nReuse the SAME data as this earlier request — only change the chart as asked:\n" + last_chart["request"]
+    return p
+
+def make_chart(msg):
+    """Return a jsonify-able dict for a chart request. On success includes a
+    base64 PNG under "chart" plus a short caption as the chat reply."""
+    global last_chart
+    raw = ask([{"role": "user", "content": _chart_prompt(msg)}],
+              system="You are a data-visualization code generator. Output only the script block and the CAPTION line.",
+              max_tokens=900, temperature=0.2)
+    code_m = re.search(r"```(?:python)?\s*\n([\s\S]*?)```", raw or "")
+    if not code_m:
+        if raw and "NEED_DATA" in raw.upper():
+            return {"response": "I need the data first. Give me numbers, like: \"plot visitors by month: "
+                                "Jan 120, Feb 145, Mar 98\" — or tell me where to pull them from."}
+        return {"response": "I couldn't turn that into a chart. Try \"make a bar chart of these numbers: 10, 20, 15\"."}
+    code = code_m.group(1).strip()
+    cap_m = re.search(r"CAPTION:\s*(.+)", raw or "")
+    caption = (cap_m.group(1).strip() if cap_m else "Here's your chart.")[:120]
+
+    if _BLOCKED_IMPORT.search(code):
+        return {"response": "That chart needs system access I can't allow. Ask me to plot data directly instead."}
+
+    tmp = tempfile.mkdtemp(prefix="jarvis_chart_")
+    out_png = os.path.join(tmp, "chart.png")
+    code = re.sub(r"plt\.show\(\)", "pass", code)
+    script = ('import matplotlib\nmatplotlib.use("Agg")\n' + code +
+              '\nplt.savefig(r"%s", dpi=110, bbox_inches="tight")\n' % out_png)
+    sp = os.path.join(tmp, "s.py")
+    with open(sp, "w", encoding="utf-8") as f:
+        f.write(script)
+    try:
+        proc = subprocess.run([sys.executable, "-I", sp], capture_output=True,
+                              text=True, timeout=25, cwd=tmp,
+                              creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    except subprocess.TimeoutExpired:
+        return {"response": "The chart timed out (>25s) — probably a runaway script. I've stopped it; try a simpler one."}
+    if not os.path.exists(out_png):
+        tail = " · ".join((proc.stderr or proc.stdout or "").strip().splitlines()[-3:])[-400:]
+        return {"response": "The chart failed to render" + (": " + tail if tail else ".")}
+    with open(out_png, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode()
+    last_chart = {"request": msg}
+    return {"response": caption, "chart": "data:image/png;base64," + b64, "chart_caption": caption}
+
+# ── CODING INTAKE HELPERS ─────────────────────────────────────────────
+CLARIFY_MSG = ("On it — one quick thing before I start: what should it do exactly, "
+               "and what will it run on (Python on this PC, an Arduino, a Raspberry Pi)? "
+               "Reply with the details, or say 'just do it' and I'll use my best judgment.")
+_SKIP_INTAKE_WORDS = ("just do it", "go ahead", "start now", "do it", "asap",
+                      "dont ask", "don't ask", "no questions", "you decide", "whatever")
+_AFFIRM_RE = re.compile(r"^(sure|yes|yeah|yep|yup|ok|okay|go ahead|help|help me|please|lets go|let's go)[\s.!?,]*$", re.I)
+_CANCEL_INTAKE = ("nevermind", "cancel", "forget it", "forget that", "stop", "dont bother", "don't bother", "skip it")
+
+def _is_affirm(low):
+    return bool(_AFFIRM_RE.search(low.strip()))
+
 @app.route("/api/chat", methods=["POST"])
 @auth
 def chat():
+    global code_intake, mimo_usb_pending
     d = request.json or {}
     msg  = d.get("message","").strip()
     hist = [{"role": m.get("role"), "content": (m.get("content") or "")[:1500]}
             for m in d.get("history",[]) if m.get("role") in ("user","assistant")][-10:]
-    if not msg: return jsonify({"response":"No message, Sir."}), 400
+    if not msg: return jsonify({"response":"No message."}), 400
     if not hist or hist[-1].get("content") != msg:
         hist.append({"role":"user","content":msg})
     rm = re.match(r"^(?:remember|note)\s+(?:that\s+)?(.+)$", msg, re.I)
@@ -1176,14 +1618,76 @@ def chat():
         memory_store.append({"id": str(uuid.uuid4())[:8], "fact": rm.group(1).strip()[:400], "ts": time.time()})
         del memory_store[100:]
         persist()
-        return jsonify({"response":"Got it, Sir — I'll remember that."})
+        return jsonify({"response":"Got it — I'll remember that."})
+    # ── MIMO coding intake ──
+    # New code request → MIMO asks ONE clarifying question first. While the
+    # intake is open the next message is the answer and coding starts. "sure"
+    # right after a fresh USB plug-in also opens the intake for that device.
+    intake_task = None
+    low = msg.lower()
+    if any(w in low for w in _SKIP_INTAKE_WORDS):
+        code_intake = {}
+    elif code_intake.get("active"):
+        if any(w in low for w in _CANCEL_INTAKE):
+            code_intake = {}
+        else:
+            code_intake["answers"].append(msg)
+            intake_task = code_intake["task"]
+            if code_intake["answers"]:
+                intake_task += "\n\nDetails from Mohamed: " + " ; ".join(code_intake["answers"])
+            code_intake = {}
+    elif CODE_RE.search(msg):
+        code_intake = {"active": True, "task": msg, "answers": [], "ask_at": time.time()}
+        return jsonify({"response": CLARIFY_MSG})
+    elif mimo_usb_pending and (time.time() - mimo_usb_pending.get("ts", 0)) < 300 and _is_affirm(low):
+        devs = ", ".join(mimo_usb_pending["devices"][:2]) or "a new device"
+        code_intake = {"active": True, "task": f"Program the newly plugged-in hardware ({devs})",
+                       "answers": [], "ask_at": time.time()}
+        return jsonify({"response": "Perfect. Tell me what you want it to do and what it should run on — "
+                                    "or say 'just do it' and I'll use my best judgment."})
     system = CHAT_SYSTEM
-    is_action = bool(BROWSER_RE.search(msg) or DESKTOP_RE.search(msg) or CODE_RE.search(msg))
-    if not is_action and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
+    # EV vision: if the webcam recently captured a frame, Jarvis already knows the scene.
+    if vision_latest and (time.time() - vision_latest["ts"]) < VISION_TTL:
+        scene = vision_latest
+        _gaze = scene.get("gaze_target", "other")
+        _obj = ", ".join(scene.get("objects_held") or []) or "nothing in particular"
+        _screen = f", screen reads: {scene['on_screen']}" if scene.get("on_screen") else ""
+        system += (f"\n\n[You just caught a live frame of Mohamed — you're EV, you can see him. "
+                   f"He looks {scene.get('emotion','neutral')}, gaze on {_gaze}, holding {_obj}, "
+                   f"doing: {scene.get('activity','') or 'nothing specific'}{_screen}. "
+                   f"Reference it naturally if relevant (e.g. 'nice, you're at the desk'), don't overdo it "
+                   f"and never say 'according to my webcam' — you just see him.]")
+    # MIMO persona + mood: how EV is feeling and what it remembers about the last scenes.
+    if mimo_memory:
+        _recent = mimo_memory[-3:]
+        _scenes = "; ".join(f"{m['scene_text']}" for m in _recent if m.get("scene_text"))
+        system += (f"\n\n[You are MIMO, Mohamed's little desktop companion — {MIMO_PERSONA['speaking_style']} "
+                   f"Your current mood is {mimo_mood.get('state','neutral')} "
+                   f"(energy {round(mimo_mood.get('energy',0.5),2)}/1). "
+                   f"Recent scenes you remember: {_scenes or 'nothing yet.'} "
+                   f"Answer with your persona: warm, curious, protective, one short line. "
+                   f"React to his mood honestly — if he's frustrated, offer help; if he's happy, share it.]")
+    # Charts — "make a chart/plot/graph of ..." → render an image, return it.
+    # Short-circuits before browser/code routing so "plot" never becomes a code task.
+    if _chart_request(msg):
+        return jsonify(make_chart(msg))
+
+    is_action = bool(BROWSER_RE.search(msg) or DESKTOP_RE.search(msg) or CODE_RE.search(msg)
+                     or _is_robot_cmd(msg))
+    _followup = bool(browser_answers) and _is_followup(msg)
+    if not is_action and not _followup and "```" not in msg and len(msg) <= 400 and GROUND_RE.search(msg):
         ctx = search_web(msg)
         if ctx:
             system = CHAT_SYSTEM + ("\n\nFresh web context to ground your answer (use it if relevant, cite "
                                     "sources with their URLs):\n" + ctx[:2500])
+    # Fresh browser research → so "what are its features?" can refer back to
+    # the recommendation instead of being re-searched or misunderstood.
+    if browser_answers:
+        _rb = "\n".join("- Q: %s -> A: %s" % (b["command"][:120], b["answer"][:900])
+                        for b in browser_answers[:2])
+        system += ("\n\n[Recent research you just finished for Mohamed (he may follow up on these):\n" + _rb +
+                   "\nIf his next message refers back — 'it', 'that', 'the features', 'price', 'the first one' — "
+                   "answer from the matching research above. Do not re-search and do not ask what he means.]")
     if not is_action:  # auto-skills shape the reply (action turns just emit a dispatch tag)
         active = pick_skills(msg)
         if active:
@@ -1207,8 +1711,19 @@ def chat():
     if cm and cm.group(1).strip():
         reply = re.sub(r"\[\[CODE\]\][^\[]*", "", reply).rstrip()
         cmd = ("code", cm.group(1).strip())
+    rm2 = re.search(r"\[\[ROBOT\]\]\s*([^\[]*)", reply)
+    if rm2 and rm2.group(1).strip():
+        reply = re.sub(r"\[\[ROBOT\]\][^\[]*", "", reply).rstrip()
+        cmd = ("robot", rm2.group(1).strip())
+    # An open intake answer always wins the code dispatch (even if the reply
+    # text or the message itself didn't match CODE_RE).
+    if intake_task:
+        cmd = ("code", intake_task)
+        reply = "On it — coding now."
     if not cmd:
-        if DESKTOP_RE.search(msg):
+        if _is_robot_cmd(msg):
+            cmd = ("robot", msg)
+        elif DESKTOP_RE.search(msg):
             cmd = ("desktop", msg)
         elif CODE_RE.search(msg):
             cmd = ("code", msg)
@@ -1223,41 +1738,52 @@ def chat():
                 task = enqueue_browser(target, planned)
                 browser_iters[task["chain"]] = BROWSER_MAX_ITERS
                 extra = (f"\n\n🌐 Browser: I've queued \"{target}\" ({len(planned)} actions). "
-                         f"Your extension is carrying it out — the result lands on the Browser page and Telegram, Sir.")
+                         f"Your extension is carrying it out — the result lands on the Browser page and Telegram.")
             else:
-                extra = f"\n\n⚠️ Browser: I couldn't plan \"{target}\", Sir."
+                extra = f"\n\n⚠️ Browser: I couldn't plan \"{target}\"."
         elif kind == "desktop":
             dsteps = plan_desktop(target)
             if not dsteps:
-                extra = f"\n\n⚠️ Desktop: I couldn't plan \"{target}\", Sir."
+                extra = f"\n\n⚠️ Desktop: I couldn't plan \"{target}\"."
             else:
                 dtask = enqueue_desktop(target, dsteps)
                 if dtask["status"] == "blocked":
-                    extra = f"\n\n🚫 Desktop: blocked, Sir — {dtask.get('reason','')}. I won't run destructive commands."
+                    extra = f"\n\n🚫 Desktop: blocked — {dtask.get('reason','')}. I won't run destructive commands."
                 elif dtask["status"] == "pending":
                     n_risky = sum(1 for v in dtask["verdicts"] if v == "approve")
                     extra = (f"\n\n🖥️ Desktop: {len(dsteps)} actions planned, but {n_risky} need your OK. "
-                             f"Approve on the Desktop page (or Telegram), Sir.")
-                    tg(f"🖥️ <b>DESKTOP APPROVAL NEEDED, SIR</b>\n\n\"{target[:60]}\"\n" +
+                             f"Approve on the Desktop page (or Telegram).")
+                    tg(f"🖥️ <b>DESKTOP APPROVAL NEEDED</b>\n\n\"{target[:60]}\"\n" +
                        "\n".join(f"  • {s.get('action')} {s.get('command') or s.get('path') or s.get('app') or ''}"
                                  for s in dtask["steps"]) +
                        f"\n\nApprove: <code>APPROVE {dtask['id']}</code>  or  <code>DENY {dtask['id']}</code>")
                 else:
                     extra = (f"\n\n🖥️ Desktop: I've queued \"{target}\" ({len(dsteps)} actions) — "
-                             f"your PC agent is carrying it out, Sir.")
+                             f"your PC agent is carrying it out.")
+        elif kind == "robot":
+            rsteps = plan_robot(target)
+            if not rsteps:
+                extra = f"\n\n🤖 Buddy: I couldn't plan \"{target}\"."
+            else:
+                enqueue_robot(target, rsteps)
+                extra = (f"\n\n🤖 Buddy: {len(rsteps)} action(s) queued — your robot is on it."
+                         f"\n\n_It runs on WiFi through the ESP32-C3 body._")
         else:  # code
             csteps = plan_code(target)
             if not csteps:
-                extra = f"\n\n⚠️ Coding: I couldn't plan \"{target}\", Sir."
+                extra = f"\n\n⚠️ Coding: I couldn't plan \"{target}\"."
             else:
                 ctask = enqueue_desktop(target, csteps, label="code")
                 if ctask["status"] == "blocked":
-                    extra = f"\n\n🚫 Coding: blocked, Sir — {ctask.get('reason','')}."
+                    extra = f"\n\n🚫 Coding: blocked — {ctask.get('reason','')}."
                 elif ctask["status"] == "pending":
-                    extra = f"\n\n💻 Coding: planned, but needs your approval first, Sir (check the Desktop page or Telegram)."
+                    extra = f"\n\n💻 Coding: planned, but needs your approval first (check the Desktop page or Telegram)."
                 else:
                     code_iters[ctask["chain"]] = CODE_MAX_ITERS
-                    extra = f"\n\n💻 Coding: I've queued it — writing and running in your workspace, Sir."
+                    if FULL_ACCESS:
+                        extra = "\n\n💻 Coding: I've queued it — writing, running, and fixing until it works."
+                    else:
+                        extra = f"\n\n💻 Coding: I've queued it — writing and running in your workspace."
     # Long-form prose (essays, articles) gets a dedicated humanize rewrite pass
     # so it reads as a human voice instead of language-model default.
     if not cmd and len(reply) >= 500 and "```" not in reply:
@@ -1266,11 +1792,122 @@ def chat():
             reply = h
     return jsonify({"response": reply + extra})
 
+# ── ROBOT ROUTES (ESP32-C3 QBIT body, polls directly) ──────────
+@app.route("/api/robot/poll", methods=["GET"])
+@auth
+def robot_poll():
+    """ESP32-C3 polls this every 2s for commands (expressions, sounds)."""
+    global robot_last_seen
+    robot_last_seen = time.time()
+    if not robot_queue:
+        return jsonify({"command": None})
+    task = robot_queue.pop(0)
+    steps = task.get("steps", [])
+    if steps:
+        cmd = steps[0]
+        if len(steps) > 1:
+            robot_queue.insert(0, {"id": task["id"], "command": task["command"],
+                                   "steps": steps[1:], "label": "robot", "ts": time.time()})
+        return jsonify({"command": cmd})
+    return jsonify({"command": None})
+
+@app.route("/api/robot/result", methods=["POST"])
+@auth
+def robot_result():
+    """ESP32 reports what it did."""
+    d = request.json or {}
+    robot_results[str(time.time())] = {"ok": d.get("ok"), "action": d.get("action", ""),
+                                       "ts": time.time()}
+    if len(robot_results) > 40:
+        for k in list(robot_results)[:-40]:
+            robot_results.pop(k, None)
+    return jsonify({"ok": True})
+
+@app.route("/api/robot/poke", methods=["POST"])
+@auth
+def robot_poke():
+    """Touch sensor event from the ESP32 — Jarvis reacts."""
+    if not hasattr(app, '_robot_pokes'):
+        app._robot_pokes = []
+    app._robot_pokes.append(time.time())
+    app._robot_pokes = app._robot_pokes[-20:]
+    return jsonify({"ok": True, "message": "Poke received!"})
+
+@app.route("/api/robot/usb_event", methods=["POST"])
+@auth
+def robot_usb_event():
+    """The desktop agent reports a newly plugged-in device (Arduino/ESP32/Pico/Pi).
+    The proactive loop turns it into MIMO offering to program it."""
+    global mimo_usb_pending
+    devs = [str(x).strip()[:80] for x in ((request.json or {}).get("devices") or []) if str(x).strip()]
+    if devs:
+        mimo_usb_pending = {"devices": devs, "ts": time.time()}
+        print("USB event:", devs)
+    return jsonify({"ok": True})
+
+@app.route("/api/robot/status", methods=["GET"])
+@auth
+def robot_status():
+    """Robot connection + recent results."""
+    connected = bool(robot_last_seen) and (time.time() - robot_last_seen) < 10
+    recent = list(robot_results.values())[-5:]
+    return jsonify({"connected": connected, "last_seen": robot_last_seen,
+                    "queue": len(robot_queue), "recent": recent})
+
+@app.route("/api/vision/upload", methods=["POST"])
+@auth
+def vision_upload():
+    """Desktop agent posts a webcam JPEG (base64) plus optional screenshot + gaze hint.
+    Groq vision analyzes it into structured JSON; MIMO stores the scene in memory."""
+    global vision_latest, mimo_look, mimo_day, mimo_day_hour, mimo_day_first, mimo_usual_hour
+    d = request.json or {}
+    image_b64 = (d.get("image") or "").strip()
+    if not image_b64:
+        return jsonify({"error": "No image"}), 400
+    screenshot_b64 = (d.get("screenshot") or "").strip()
+    gaze = d.get("gaze") or {}
+    analysis = analyze_webcam(image_b64, screenshot_b64 or None, gaze)
+    if analysis is None:
+        return jsonify({"error": "Vision analysis failed", "hint": "Check GROQ_VISION_MODEL on Render"}), 502
+    vision_latest = {"ts": time.time(), "gaze_hint": gaze, **analysis,
+                     "faces": int(gaze.get("faces") or 1), "dist": str(gaze.get("dist") or "mid")}
+    # roll the scene into episodic memory (cap ~200)
+    mimo_memory.append({"ts": time.time(),
+                        "emotion": analysis["emotion"],
+                        "gaze_target": analysis["gaze_target"],
+                        "objects_held": analysis["objects_held"],
+                        "scene_text": analysis["scene_text"]})
+    del mimo_memory[:-200]
+    _update_mood(analysis)
+    # observation memory: baseline look + first-sighting-of-day for routine triggers
+    look = (analysis.get("look_desc") or "").strip()
+    if look and not mimo_look:
+        mimo_look = {"desc": look, "ts": time.time()}
+    dt = datetime.datetime.now()
+    day = dt.strftime("%Y-%m-%d")
+    if day != mimo_day:
+        mimo_day, mimo_day_hour, mimo_day_first = day, dt.hour, True
+        if mimo_usual_hour is None:
+            mimo_usual_hour = dt.hour
+    persist()
+    return jsonify({"ok": True, "analysis": vision_latest})
+
+@app.route("/api/vision/status", methods=["GET"])
+@auth
+def vision_status():
+    """Current stored vision analysis + MIMO's mood & scene memory (for the desktop page)."""
+    fresh = bool(vision_latest) and (time.time() - vision_latest["ts"]) < VISION_TTL
+    return jsonify({"vision": vision_latest,
+                    "mood": mimo_mood,
+                    "memory": mimo_memory[-5:],
+                    "ttl": VISION_TTL,
+                    "fresh": fresh})
+
 @app.route("/api/math/solve", methods=["POST"])
 @auth
 def math_solve():
     prob = (request.json or {}).get("problem","").strip()
-    if not prob: return jsonify({"solution":"No problem given, Sir."}), 400
+    if not prob: return jsonify({"solution":"No problem given."}), 400
     sol = ask([{"role":"user","content":f"Solve step by step:\n\n{prob}"}],
               system="You are a math tutor. Show every step clearly using plain text. Label steps. Give final answer on its own line.")
     return jsonify({"solution": sol})
@@ -1298,7 +1935,7 @@ def canvas_assignments():
 def canvas_complete():
     aid = (request.json or {}).get("assignment_id","")
     if not aid or aid not in assign_timers:
-        return jsonify({"message":"Assignment not found, Sir."}), 404
+        return jsonify({"message":"Assignment not found."}), 404
     a = assign_timers[aid]
     assign_timers[aid]["status"] = "drafting"
 
@@ -1309,13 +1946,13 @@ def canvas_complete():
         pid = f"canvas_{aid}"
         pending[pid] = {"type":"canvas","assignment":a,"draft":draft,"aid":aid}
         assign_timers[aid]["status"] = "awaiting"
-        tg(f"📝 <b>DRAFT COMPLETE, SIR</b>\n\n"
+        tg(f"📝 <b>DRAFT COMPLETE</b>\n\n"
            f"<b>Course:</b> {a['course']}\n"
            f"<b>Title:</b> {a['title']}\n\n"
            f"{draft[:700]}{'...' if len(draft)>700 else ''}\n\n"
            f"Reply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
     threading.Thread(target=do, daemon=True).start()
-    return jsonify({"message":"Drafting now, Sir. Check Telegram in ~30 seconds."})
+    return jsonify({"message":"Drafting now. Check Telegram in ~30 seconds."})
 
 @app.route("/api/outlook/emails", methods=["GET"])
 @auth
@@ -1419,16 +2056,16 @@ def browser_task():
     command = (d.get("command") or "").strip()
     steps   = d.get("steps")
     if not command and not steps:
-        return jsonify({"error": "Provide 'command' or 'steps', Sir."}), 400
+        return jsonify({"error": "Provide 'command' or 'steps'."}), 400
     if steps:
         clean = sanitize_steps(steps)
         if not clean:
-            return jsonify({"error": "No valid steps provided, Sir."}), 400
+            return jsonify({"error": "No valid steps provided."}), 400
         task = enqueue_browser(command or "manual steps", clean)
     else:
         planned = plan_steps(command)
         if not planned:
-            return jsonify({"error": "Couldn't plan steps for that, Sir."}), 502
+            return jsonify({"error": "Couldn't plan steps for that."}), 502
         task = enqueue_browser(command, planned)
         browser_iters[task["chain"]] = BROWSER_MAX_ITERS
     return jsonify({"task_id": task["id"], "enqueued": True,
@@ -1493,7 +2130,7 @@ def api_browser_session():
         d = request.json or {}
         urls = [u for u in (d.get("urls") or []) if isinstance(u, str) and u.startswith("http")]
         if not urls:
-            return jsonify({"error":"No valid URLs, Sir."}), 400
+            return jsonify({"error":"No valid URLs."}), 400
         browser_sessions = [{"urls": urls, "ts": time.time()}]
         return jsonify({"ok": True, "saved": len(urls)})
     return jsonify({"urls": browser_sessions[0]["urls"] if browser_sessions else []})
@@ -1568,7 +2205,7 @@ def desktop_result():
                 desktop_answers.insert(0, {"command": task["command"], "answer": ans, "ts": time.time()})
                 del desktop_answers[10:]
                 safe = ans.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-                tg(f"💻 <b>CODE RESULT, SIR</b>\n\n{safe[:2000]}")
+                tg(f"💻 <b>CODE RESULT</b>\n\n{safe[:2000]}")
             elif verdict.get("steps"):
                 if _is_looping(chain, verdict["steps"]):
                     _clear_loop(chain)
@@ -1578,17 +2215,17 @@ def desktop_result():
                     if nxt.get("status") == "queued":
                         tg(f"💻 Code: {len(verdict['steps'])} more actions for \"{task['command'][:40]}\"")
                     elif nxt.get("status") == "pending":
-                        tg(f"💻 Code needs approval for the next step(s) of \"{task['command'][:40]}\" — Desktop page, Sir.")
+                        tg(f"💻 Code needs approval for the next step(s) of \"{task['command'][:40]}\" — Desktop page.")
             else:
                 _clear_loop(chain)
-                tg(f"🏁 Code task stalled: \"{task['command'][:40]}\" — no next steps, Sir.")
+                tg(f"🏁 Code task stalled: \"{task['command'][:40]}\" — no next steps.")
         else:
             _clear_loop(chain)
             tg(f"🏁 Code task stopped (iteration limit): \"{task['command'][:40]}\"")
 
     if errs and (not task or task.get("label") != "code"):
         names = ", ".join(sorted({str(s.get("action")) for s in errs}))[:200]
-        tg(f"🖥️ Desktop task hit errors ({names}): \"{(task or {}).get('command','')[:50]}\" — check the Desktop page, Sir.")
+        tg(f"🖥️ Desktop task hit errors ({names}): \"{(task or {}).get('command','')[:50]}\" — check the Desktop page.")
     return jsonify({"ok": True})
 
 @app.route("/api/desktop/approvals", methods=["GET"])
@@ -1612,7 +2249,7 @@ def desktop_approval():
                 return jsonify({"ok": True, "queued": True})
             tg(f"🙅 Desktop task denied: \"{t['command'][:60]}\"")
             return jsonify({"ok": True, "denied": True})
-    return jsonify({"error": "No such pending task, Sir."}), 404
+    return jsonify({"error": "No such pending task."}), 404
 
 # ── CODING POWERS (runs through the desktop agent, sandboxed to workspace) ──
 @app.route("/api/code/run", methods=["POST"])
@@ -1621,10 +2258,10 @@ def code_run():
     d = request.json or {}
     command = (d.get("command") or "").strip()
     if not command:
-        return jsonify({"error": "Give me a coding task, Sir."}), 400
+        return jsonify({"error": "Give me a coding task."}), 400
     steps = plan_code(command)
     if not steps:
-        return jsonify({"error": "Couldn't plan that, Sir."}), 502
+        return jsonify({"error": "Couldn't plan that."}), 502
     task = enqueue_desktop(command, steps, label="code")
     if task.get("status") == "blocked":
         return jsonify({"ok": True, "blocked": True, "reason": task.get("reason", "")})
@@ -1743,7 +2380,7 @@ def api_bulk_scrape():
     if mode == "crawl":
         seed = (d.get("url") or (urls[0] if urls else "")).strip()
         if not seed.startswith(("http://", "https://")):
-            return jsonify({"error": "Crawl mode needs a starting http(s) URL, Sir."}), 400
+            return jsonify({"error": "Crawl mode needs a starting http(s) URL."}), 400
         try:
             urls = _crawl_links(seed, max_pages=int(d.get("max_pages") or 50))
         except Exception as e:
@@ -1751,12 +2388,12 @@ def api_bulk_scrape():
     elif mode == "search":
         q = (d.get("query") or "").strip()
         if not q:
-            return jsonify({"error": "Search mode needs a query, Sir."}), 400
+            return jsonify({"error": "Search mode needs a query."}), 400
         urls = _search_seed_urls(q, max_results=int(d.get("max_results") or 20))
         urls = urls[:MAX_TOTAL]
 
     if not urls:
-        return jsonify({"error": "No URLs to collect, Sir."}), 400
+        return jsonify({"error": "No URLs to collect."}), 400
 
     per_host, accepted, skipped, failed = {}, [], [], []
     for u in urls:
@@ -1791,7 +2428,7 @@ def tg_webhook():
     if upper.startswith("CANVAS YES "):
         aid = text.split()[-1]
         if aid in assign_timers:
-            tg("⚡ Starting completion now, Sir...")
+            tg("⚡ Starting completion now...")
             a = assign_timers[aid]
             assign_timers[aid]["status"] = "drafting"
             def do_approve():
@@ -1801,15 +2438,15 @@ def tg_webhook():
                 pid = f"canvas_{aid}"
                 pending[pid] = {"type":"canvas","assignment":a,"draft":draft,"aid":aid}
                 assign_timers[aid]["status"] = "awaiting"
-                tg(f"📝 <b>DRAFT READY, SIR</b>\n\n{a['title']}\n\n{draft[:700]}{'...' if len(draft)>700 else ''}\n\nReply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
+                tg(f"📝 <b>DRAFT READY</b>\n\n{a['title']}\n\n{draft[:700]}{'...' if len(draft)>700 else ''}\n\nReply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
             threading.Thread(target=do_approve, daemon=True).start()
         else:
-            tg("Assignment not found, Sir.")
+            tg("Assignment not found.")
 
     elif upper.startswith("CANVAS NO "):
         aid = text.split()[-1]
         if aid in assign_timers: assign_timers[aid]["status"] = "skipped"
-        tg("✅ Skipped, Sir.")
+        tg("✅ Skipped.")
 
     elif upper.startswith("SUBMIT CANVAS_"):
         pid = text.split(" ",1)[1].strip()
@@ -1818,15 +2455,15 @@ def tg_webhook():
             a = p["assignment"]
             ok, m = submit_canvas(a.get("course_id",""), p["aid"], p["draft"])
             assign_timers.get(p["aid"],{}).update({"status":"submitted" if ok else "ready"})
-            tg(f"{'✅ SUBMITTED' if ok else '❌ FAILED'}, SIR. {m}")
+            tg(f"{'✅ SUBMITTED' if ok else '❌ FAILED'}. {m}")
         else:
-            tg("Approval not found, Sir.")
+            tg("Approval not found.")
 
     elif upper.startswith("REJECT CANVAS_"):
         pid = text.split(" ",1)[1].strip()
         p = pending.pop(pid, None)
         if p: assign_timers.get(p["aid"],{}).update({"status":"ready"})
-        tg("❌ Rejected, Sir. Assignment not submitted.")
+        tg("❌ Rejected. Assignment not submitted.")
 
     # EMAIL approval
     elif upper.startswith("SEND EMAIL_"):
@@ -1834,14 +2471,14 @@ def tg_webhook():
         p = pending.pop(pid, None)
         if p and p["type"] == "email":
             ok, m = send_email(p["to"], p["subject"], p["body"], p.get("email_id"))
-            tg(f"{'✅ Email sent' if ok else '❌ Failed'}, Sir. {m}")
+            tg(f"{'✅ Email sent' if ok else '❌ Failed'}. {m}")
         else:
-            tg("Approval not found, Sir.")
+            tg("Approval not found.")
 
     elif upper.startswith("SKIP EMAIL_"):
         pid = text.split(" ",1)[1].strip()
         pending.pop(pid, None)
-        tg("✅ Email draft discarded, Sir.")
+        tg("✅ Email draft discarded.")
 
     # DESKTOP approval (approve/deny a PC-agent task)
     elif upper.startswith("APPROVE "):
@@ -1854,7 +2491,7 @@ def tg_webhook():
                 desktop_queue.append(cand)
                 t = cand
                 break
-        tg(f"✅ Desktop task approved, Sir: \"{t['command'][:60]}\"" if t else "Approval not found, Sir.")
+        tg(f"✅ Desktop task approved:\"{t['command'][:60]}\"" if t else "Approval not found.")
 
     elif upper.startswith("DENY "):
         tid = text.split()[-1]
@@ -1864,7 +2501,7 @@ def tg_webhook():
                 desktop_pending.pop(i)
                 ok = True
                 break
-        tg(f"🙅 Desktop task denied, Sir." if ok else "Approval not found, Sir.")
+        tg(f"🙅 Desktop task denied." if ok else "Approval not found.")
 
     # Freeform chat with Jarvis
     else:
@@ -1920,14 +2557,14 @@ def run_digest():
     except Exception as e:
         print("digest news err", e)
     if not parts:
-        return "Nothing new this morning, Sir. All quiet."
+        return "Nothing new this morning. All quiet."
     raw = "\n\n".join(parts)
     brief = ask([{"role":"user","content":"Write a short spoken-friendly morning briefing (max 250 words) from this raw material:\n\n" + raw}],
-                system="You are Jarvis. Summarize concisely for Mohamed ('Sir') in short bullets. Max 250 words. No extra commentary.",
+                system="You are Jarvis. Summarize concisely for Mohamed in short bullets. Max 250 words. No extra commentary.",
                 max_tokens=700, temperature=0.5)
     if not brief or "AI error" in brief:
         brief = raw
-    tg(f"☀️ <b>MORNING DIGEST, SIR</b>\n\n{brief}")
+    tg(f"☀️ <b>MORNING DIGEST</b>\n\n{brief}")
     return brief
 
 @app.route("/api/digest", methods=["GET"])
@@ -1982,7 +2619,7 @@ def research(question):
         except Exception as e:
             print("research ddg err", e)
     if not snippets:
-        return "I couldn't find enough to answer that reliably, Sir. Try rewording it."
+        return "I couldn't find enough to answer that reliably. Try rewording it."
     sys = ("You are Jarvis doing deep research for Mohamed. Synthesize the provided source snippets into a clear "
            "answer with inline numbered citations like [1][2]. End with a 'Sources:' list of the URLs. Be accurate; "
            "if sources conflict, say so.")
@@ -1990,7 +2627,7 @@ def research(question):
            "\n\n".join(f"[{i+1}] {s}" for i,s in enumerate(snippets[:12])) + \
            "\n\nSource URLs:\n" + "\n".join(sources[:12])
     ans = ask([{"role":"user","content":user}], system=sys, max_tokens=2000, temperature=0.3)
-    return ans or "No answer, Sir."
+    return ans or "No answer."
 
 @app.route("/api/research", methods=["POST"])
 @auth
@@ -1998,7 +2635,7 @@ def api_research():
     d = request.json or {}
     q = (d.get("question") or "").strip()
     if not q:
-        return jsonify({"error":"Provide a question, Sir."}), 400
+        return jsonify({"error":"Provide a question."}), 400
     return jsonify({"answer": research(q)})
 
 # ── SCHEDULED REMINDERS (Telegram) ────────────────────────────────────
@@ -2013,12 +2650,12 @@ def api_reminder():
     text = (d.get("text") or "").strip()
     when = (d.get("when") or "").strip()
     if not text:
-        return jsonify({"error":"Provide 'text', Sir."}), 400
+        return jsonify({"error":"Provide 'text'."}), 400
     if when:
         try:
             datetime.datetime.fromisoformat(when.replace("Z","+00:00"))
         except Exception:
-            return jsonify({"error":"Invalid 'when' (ISO datetime), Sir."}), 400
+            return jsonify({"error":"Invalid 'when' (ISO datetime)."}), 400
     REMINDERS.append({"id": str(uuid.uuid4())[:8], "text": text, "when": when, "done": False})
     if len(REMINDERS) > 200:
         REMINDERS[:] = [r for r in REMINDERS if not r.get("done")][-200:]
@@ -2040,7 +2677,153 @@ def reminder_loop():
         for r in REMINDERS:
             if not r.get("done") and r.get("when") and str(r["when"])[:16] <= now:
                 r["done"] = True
-                tg(f"⏰ <b>REMINDER, SIR</b>\n\n{r['text']}")
+                tg(f"⏰ <b>REMINDER</b>\n\n{r['text']}")
+
+# ── MIMO LIFE LOOP ─────────────────────────────────────────────────────
+# The proactive "life": when a fresh webcam analysis exists, rule triggers
+# decide whether MIMO speaks up on its own. Each line is written by Groq in
+# MIMO's voice, spoken on the PC, and mirrored as a talking OLED face.
+
+MIMO_MIN_SPEAK_SECS   = 180      # don't chatter more than once per 3 min
+MIMO_ESCALATE_EMOTES  = ("frustrated", "angry", "stressed", "tired", "sad")
+MIMO_PAPER_STUCK_SECS = 45       # reading a paper this long → "need a hand?"
+MIMO_LOOK_COOLDOWN    = 1800     # don't re-announce a look change for 30 min
+
+def enqueue_mimo_say(text):
+    """Make MIMO speak on the PC (TTS + popup) and animate its OLED mouth."""
+    text = (text or "").strip()[:280]
+    if not text:
+        return None
+    desktop_queue.append({"id": str(uuid.uuid4())[:8], "command": "MIMO speaks",
+                          "steps": [{"action": "mimo_say", "text": text}],
+                          "verdicts": ["safe"], "label": "mimo",
+                          "chain": str(uuid.uuid4())[:8], "ts": time.time()})
+    robot_queue.append({"id": str(uuid.uuid4())[:8], "command": "talk face",
+                        "steps": [{"action": "eye", "expression": "talk"}],
+                        "label": "robot", "ts": time.time()})
+
+def ask_mimo_line(instruction):
+    """Ask Groq to write one short line in MIMO's voice about the scene. None on failure."""
+    if not GROQ_KEY:
+        return None
+    v = vision_latest or {}
+    system = (f"You are MIMO, Mohamed's little desktop companion. {MIMO_PERSONA['speaking_style']} "
+              f"Current mood: {mimo_mood.get('state', 'neutral')} "
+              f"(energy {round(mimo_mood.get('energy', 0.5), 2)}/1).")
+    user = (f"{instruction}\n\nScene right now: emotion={v.get('emotion', 'unknown')}, "
+            f"gaze={v.get('gaze_target', 'unknown')}, "
+            f"objects={', '.join(v.get('objects_held') or []) or 'nothing'}, "
+            f"activity={v.get('activity', '')}, on_screen={v.get('on_screen', '')}. "
+            f"Say it as MIMO — one short line, no preamble, no quotes, no hashtags.")
+    return _groq_call([{"role": "user", "content": user}],
+                      system=system, max_tokens=120, temperature=0.9)
+
+def _look_differs(new_desc):
+    """True when a fresh appearance description meaningfully differs from the stored baseline."""
+    base = (mimo_look.get("desc") or "").lower()
+    new  = (new_desc or "").lower()
+    if not base or not new:
+        return False
+    a = set(base.replace(",", " ").split())
+    b = set(new.replace(",", " ").split())
+    if not a or not b:
+        return False
+    return len(a & b) / max(1.0, len(a | b)) < 0.45   # <45% word overlap → a real change
+
+def mimo_proactive_loop():
+    """Watch the fresh analyses and speak up on rule triggers, with a cooldown.
+    Priority: stranger > escalating emotion > paper-stuck > novel object >
+    look change (haircut/clothes) > proximity > routine > happy."""
+    global mimo_day_first, mimo_look, mimo_usual_hour
+    last_speak     = 0.0
+    paper_since    = 0.0            # when gaze first went to paper
+    last_sighting  = 0.0
+    last_usb_offer = 0.0
+    seen_objects   = set()
+    while True:
+        time.sleep(30)
+        now  = time.time()
+        v    = vision_latest
+        if not v or (now - v.get("ts", 0)) > VISION_TTL:
+            continue              # nothing fresh to react to
+        gaze    = v.get("gaze_target", "other")
+        emotion = v.get("emotion", "neutral")
+        objects = [str(o).strip().lower() for o in (v.get("objects_held") or [])]
+        faces   = int(v.get("faces") or 1)
+        dist    = v.get("dist", "mid")
+        if gaze == "paper":
+            paper_since = paper_since or now
+        else:
+            paper_since = 0.0
+        # Greet after a long absence (silent run for >30 min).
+        if last_sighting and (now - last_sighting) > 1800:
+            last_sighting = now
+            line = ask_mimo_line("Mohamed just came back after a long time away. Greet him warmly — he hasn't seen you in a while.")
+            if line:
+                last_speak = now
+                enqueue_mimo_say(line)
+            continue
+        last_sighting = now
+        # Cooldown — but let a strong emotion or a stranger break through it.
+        breaks_cooldown = emotion in MIMO_ESCALATE_EMOTES or faces > 1
+        if (now - last_speak) < MIMO_MIN_SPEAK_SECS and not breaks_cooldown:
+            continue
+        trigger = None
+        # 0. New hardware plugged in → MIMO offers to program it. The pending
+        # event is left intact so chat() can still open the intake on "sure".
+        if mimo_usb_pending and (now - mimo_usb_pending.get("ts", 0)) < 120 and (now - last_usb_offer) > 240:
+            last_usb_offer = now
+            trigger = (f"A device was just plugged into Mohamed's PC: {', '.join(mimo_usb_pending['devices'][:2])}. "
+                       f"It's hardware to program (Arduino/ESP32/Pico/Pi). Offer to help him program it — "
+                       f"'need a hand with that?' — one short warm line.")
+        # 1. Stranger — a second face that isn't Mohamed.
+        elif faces > 1:
+            trigger = "There is a second person in view who isn't Mohamed. Ask, lightly, 'who's that?' — curious, not alarmed."
+        # 2. Escalating emotion (frustration / stress / anger / sadness).
+        elif emotion in ("frustrated", "angry", "stressed") and gaze in ("screen", "paper"):
+            trigger = (f"Mohamed looks {emotion} and is staring at the {gaze}. "
+                       f"Offer to help with whatever is fighting him. One short warm line.")
+        elif emotion == "tired" and gaze in ("screen", "paper"):
+            trigger = "Mohamed looks tired and is still working. Gently suggest a break or a coffee. One short warm line."
+        elif emotion == "sad":
+            trigger = "Mohamed looks a bit down. Check in on him, gently, without prying. One short warm line."
+        # 3. Reading the same paper for a while.
+        elif paper_since and (now - paper_since) > MIMO_PAPER_STUCK_SECS:
+            trigger = (f"Mohamed has been reading the same paper for {int(now - paper_since)}s straight. "
+                       f"Ask, casually, what he's reading and if he needs a hand with it. One short line.")
+        # 4. A new object in his hands.
+        elif objects:
+            novel = [o for o in objects if o not in seen_objects]
+            if novel:
+                seen_objects.update(objects)
+                trigger = (f"Mohamed just picked up: {', '.join(novel)}. "
+                           f"Ask him about it, playfully, like a curious companion noticing. One short line.")
+        # 5. Look change — haircut, glasses, new outfit.
+        elif v.get("look_desc") and _look_differs(v["look_desc"]) and (now - mimo_look.get("ts", 0)) > MIMO_LOOK_COOLDOWN:
+            trigger = (f"Mohamed's appearance just changed (was '{mimo_look.get('desc','')}', "
+                       f"now '{v['look_desc']}'). Notice it warmly — new haircut or new clothes. One short playful line.")
+            mimo_look = {"desc": v["look_desc"], "ts": now}
+        # 6. Proximity — he's right in front of MIMO.
+        elif dist == "near" and gaze in ("mimo", "screen"):
+            trigger = "Mohamed is very close to the camera, right in front of MIMO. Say something playful about being up in his face. One short line."
+        # 7. Routine — first sighting of the day, noticeably earlier/later than usual.
+        elif mimo_day_first:
+            mimo_day_first = False
+            if mimo_usual_hour is not None and abs(mimo_day_hour - mimo_usual_hour) >= 3:
+                early = mimo_day_hour < mimo_usual_hour
+                trigger = (f"It's Mohamed's first sighting today at {mimo_day_hour:02d}:00 — "
+                           f"{'earlier' if early else 'later'} than his usual ~{mimo_usual_hour:02d}:00. "
+                           f"Comment on the routine change, lightly. One short line.")
+            mimo_usual_hour = round((mimo_usual_hour * 0.7 + mimo_day_hour * 0.3)) if mimo_usual_hour else mimo_day_hour
+        # 8. Happy / excited.
+        elif emotion in ("happy", "excited") and (now - last_speak) > MIMO_MIN_SPEAK_SECS * 2:
+            trigger = f"Mohamed looks {emotion}. Share a little of that joy with him. One short warm line."
+        if not trigger:
+            continue
+        line = ask_mimo_line(trigger)
+        if line:
+            last_speak = now
+            enqueue_mimo_say(line)
 
 # ── CANVAS STATUS ─────────────────────────────────────────────────────
 @app.route("/api/canvas/status", methods=["GET"])
@@ -2080,6 +2863,7 @@ threading.Thread(target=canvas_loop, daemon=True).start()
 threading.Thread(target=outlook_loop, daemon=True).start()
 threading.Thread(target=digest_loop, daemon=True).start()
 threading.Thread(target=reminder_loop, daemon=True).start()
+threading.Thread(target=mimo_proactive_loop, daemon=True).start()
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 5000))

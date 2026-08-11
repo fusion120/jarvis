@@ -18,6 +18,35 @@ function headers(extra = {}) {
   return { 'Content-Type': 'application/json', 'X-Jarvis-Token': SECRET, ...extra };
 }
 
+// ── SHARED TYPING LOGIC ───────────────────────────────────────────────
+// Injected into the page for the type / type_selector / type_label actions.
+// Handles three kinds of field:
+//   • <input>/<textarea>  → native value setter + InputEvent (works with
+//     React / controlled inputs — a plain `el.value = x` does NOT trigger
+//     React's onChange).
+//   • contenteditable     → execCommand insertText (Gmail, X/Twitter,
+//     Notion-style editors). This fires the real input pipeline, so
+//     framework-controlled editors pick the text up.
+const TYPE_INTO_FN = [
+  "function typeInto(el, value) {",
+  "  if (!el) return false;",
+  "  el.focus();",
+  "  if (el.isContentEditable) {",
+  "    document.execCommand('selectAll', false, null);",
+  "    document.execCommand('insertText', false, value);",
+  "    el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));",
+  "    el.dispatchEvent(new Event('change', { bubbles: true }));",
+  "    return true;",
+  "  }",
+  "  const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;",
+  "  const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;",
+  "  if (setter) setter.call(el, value); else el.value = value;",
+  "  el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));",
+  "  el.dispatchEvent(new Event('change', { bubbles: true }));",
+  "  return true;",
+  "}"
+].join('\n');
+
 // ── TRACK CURRENT TAB ─────────────────────────────────────────────────
 chrome.tabs.onActivated.addListener(async (info) => {
   try {
@@ -122,47 +151,58 @@ async function execStep(step) {
       case 'type_selector': {
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: (sel, val) => {
+          func: new Function('sel', 'val', TYPE_INTO_FN + `
             const el = document.querySelector(sel);
             if (!el) return false;
-            el.focus();
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-              || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-            if (setter) setter.call(el, val); else el.value = val;
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-          },
+            return typeInto(el, val);
+          `),
           args: [step.selector, step.value]
         });
         return { ok: !!r.result, done: r.result ? 'typed' : 'selector not found' };
       }
 
       case 'type_label': {
-        // Find an input/textarea by its label text, type, and submit
+        // Find an input/textarea/contenteditable by its label text, type
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: (labelText, val) => {
+          func: new Function('labelText', 'val', TYPE_INTO_FN + `
             // Try label element
             const labels = [...document.querySelectorAll('label')];
             const label = labels.find(l => l.innerText?.toLowerCase().includes(labelText.toLowerCase()));
-            let el = label ? document.getElementById(label.htmlFor) || label.querySelector('input,textarea') : null;
+            let el = label ? document.getElementById(label.htmlFor) || label.querySelector('input,textarea,[contenteditable]') : null;
             // Try placeholder
-            if (!el) el = document.querySelector(`input[placeholder*="${labelText}" i], textarea[placeholder*="${labelText}" i]`);
+            if (!el) el = document.querySelector('input[placeholder*="' + labelText + '" i], textarea[placeholder*="' + labelText + '" i], [contenteditable][placeholder*="' + labelText + '" i]');
             // Try aria-label
-            if (!el) el = document.querySelector(`[aria-label*="${labelText}" i]`);
+            if (!el) el = document.querySelector('[aria-label*="' + labelText + '" i]');
             if (!el) return false;
-            el.focus();
-            const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
-              || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set;
-            if (setter) setter.call(el, val); else el.value = val;
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: val }));
-            el.dispatchEvent(new Event('change', { bubbles: true }));
-            return true;
-          },
+            return typeInto(el, val);
+          `),
           args: [step.label, step.value]
         });
-        return { ok: !!r.result, done: r.result ? `typed in "${step.label}"` : `label "${step.label}" not found` };
+        return { ok: !!r.result, done: r.result ? 'typed in "' + step.label + '"' : 'label "' + step.label + '" not found' };
+      }
+
+      case 'type': {
+        // Type into whatever field is currently focused on the page.
+        if (!step.value) return { ok: false, error: 'no text provided to type' };
+        const [r] = await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: new Function('value', TYPE_INTO_FN + `
+            const el = document.activeElement;
+            if (!el || el === document.body || el === document.documentElement) return 'none';
+            if (el.tagName === 'INPUT') {
+              const t = (el.type || 'text').toLowerCase();
+              if (['button','submit','reset','checkbox','radio','range','color','file','hidden','image'].includes(t)) return 'not-editable';
+            }
+            if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.isContentEditable) return 'not-editable';
+            return typeInto(el, value) ? 'typed' : 'failed';
+          `),
+          args: [step.value]
+        });
+        const st = r?.result;
+        if (st === 'typed') return { ok: true, done: 'typed into focused field' };
+        if (st === 'none') return { ok: false, error: 'no field is focused — click one first' };
+        return { ok: false, error: 'focused element is not a text field' };
       }
 
       case 'search': {

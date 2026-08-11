@@ -25,6 +25,8 @@ import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 
+import robot_bridge   # Jarvis Buddy — USB serial driver for the Arduino (robot/)
+
 BASE          = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE   = os.path.join(BASE, "agent_config.json")
 LOG_FILE      = os.path.join(BASE, "agent.log")
@@ -300,7 +302,8 @@ def act_run_command(step):
     cmd = (step.get("command") or "").strip()
     if not cmd:
         return err("No command, Sir.")
-    return run_shell(cmd, timeout=int(step.get("timeout") or 120))
+    cwd = step.get("cwd") or None          # optional explicit dir (e.g. a firmware folder)
+    return run_shell(cmd, timeout=int(step.get("timeout") or 120), cwd=cwd)
 
 def act_execute_code(step):
     lang = (step.get("language") or "python").lower()
@@ -349,6 +352,261 @@ def act_wait(step):
     time.sleep(max(0, int(step.get("ms") or 500)) / 1000.0)
     return ok("Waited.")
 
+# ── VISION: webcam frame → backend Groq vision analysis ───────────────
+# Set by main() once config is loaded (backend URL + API secret).
+_VISION_BACKEND = ""
+_VISION_SECRET = ""
+
+def act_capture_webcam(step):
+    """Grab one frame from the PC webcam, base64-JPEG it, and POST it to the
+    backend /api/vision/upload. Returns what Jarvis saw (analysis from Groq)."""
+    if not _VISION_BACKEND:
+        return err("Vision not configured — agent not running its main loop yet, Sir.")
+    import base64
+    try:
+        import cv2
+    except ImportError:
+        return err("Webcam needs OpenCV, Sir. Run: pip install opencv-python-headless")
+    cap = None
+    try:
+        cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)   # DSHOW = Windows directshow, reliable
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        ok_, frame = cap.read()
+        if not ok_ or frame is None:
+            return err("Couldn't read a frame from the webcam, Sir.")
+        ok_, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        if not ok_:
+            return err("Failed to encode webcam frame, Sir.")
+        image_b64 = base64.b64encode(buf.tobytes()).decode()
+    finally:
+        if cap is not None:
+            cap.release()
+    try:
+        r = requests.post(
+            f"{_VISION_BACKEND}/api/vision/upload",
+            headers={"Content-Type": "application/json",
+                     "X-Jarvis-Token": _VISION_SECRET},
+            json={"image": image_b64}, timeout=75)
+        if r.status_code == 200:
+            data = r.json()
+            analysis = data.get("analysis", "")
+            # save the frame locally so Mohamed can see what Jarvis saw
+            try:
+                shots = os.path.join(workspace, "_vision")
+                os.makedirs(shots, exist_ok=True)
+                name = "cam_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".jpg"
+                path = os.path.join(shots, name)
+                with open(path, "wb") as f:
+                    f.write(base64.b64decode(image_b64))
+                return ok(f"Jarvis looked at you: {analysis}  (frame saved: {path})")
+            except Exception:
+                return ok(f"Jarvis looked at you: {analysis}")
+        return err(f"Backend vision returned {r.status_code}: {str(r.text)[:200]}")
+    except requests.RequestException as e:
+        return err(f"Vision upload failed: {e}")
+
+def act_mimo_say(step):
+    """MIMO speaks on the PC: Windows built-in TTS + a small popup. Runs the
+    speech in a background thread so the poll loop isn't blocked. The OLED
+    mouth animates separately via the backend's robot `talk` command."""
+    text = (step.get("text") or "").strip()
+    if not text:
+        return err("No text to speak, Sir.")
+    safe = text.replace("'", "''")
+    ps = (f"Add-Type -AssemblyName System.Speech; "
+          f"$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+          f"$s.Speak('{safe}')")
+    threading.Thread(target=_mimo_speak_async, args=(ps, text), daemon=True).start()
+    return ok(f"MIMO says: {text}")
+
+def _mimo_speak_async(ps, text):
+    try:
+        subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                       timeout=60)
+    except Exception as e:
+        log(f"MIMO TTS failed: {e}")
+    try:
+        from winotify import Notification
+        Notification(app_id="MIMO", title="MIMO", msg=text[:120]).show()
+    except ImportError:
+        try:
+            import tkinter as tk
+            import tkinter.messagebox as mb
+            root = tk.Tk(); root.withdraw()
+            mb.showinfo("MIMO", text[:160])
+            root.destroy()
+        except Exception:
+            pass
+
+def _capture_screen_b64():
+    """One screen capture as base64 JPEG (downscaled to keep Groq payloads small)."""
+    import io, base64
+    from PIL import ImageGrab
+    img = ImageGrab.grab()
+    img.thumbnail((1280, 800))
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=75)
+    return base64.b64encode(buf.getvalue()).decode()
+
+def _gaze_bucket(landmarks, frame_w, frame_h):
+    """Map FaceMesh landmarks to a gaze region using the nose-vs-eyes offset.
+    Region-level only (not pixel eye-tracking): strong yaw → away, strong
+    pitch-down → paper, mild pitch-down → mimo, level face → screen."""
+    def pt(i):
+        return (landmarks[i].x * frame_w, landmarks[i].y * frame_h)
+    nose  = pt(1)          # nose tip
+    l_eye = pt(33)         # left eye outer corner
+    r_eye = pt(263)        # right eye outer corner
+    chin  = pt(152)        # chin
+    eye_cx  = (l_eye[0] + r_eye[0]) / 2
+    eye_cy  = (l_eye[1] + r_eye[1]) / 2
+    eye_w   = max(1.0, abs(r_eye[0] - l_eye[0]))
+    face_h  = max(1.0, abs(chin[1] - l_eye[1]))
+    yaw   = (nose[0] - eye_cx) / eye_w      # + = head turned right
+    pitch = (nose[1] - eye_cy) / face_h     # + = head down
+    if abs(yaw) > 0.6:
+        return "away"       # head turned to the side → not looking at anything here
+    if pitch > 0.45:
+        return "paper"      # strongly looking down at the desk
+    if pitch > 0.18:
+        return "mimo"       # looking down toward the robot on the desk
+    return "screen"         # level face → the monitor
+
+def _post_vision(image_b64, screenshot_b64, gaze):
+    try:
+        r = requests.post(
+            f"{_VISION_BACKEND}/api/vision/upload",
+            headers={"Content-Type": "application/json", "X-Jarvis-Token": _VISION_SECRET},
+            json={"image": image_b64, "screenshot": screenshot_b64 or "", "gaze": gaze},
+            timeout=75)
+        return r.status_code == 200
+    except requests.RequestException:
+        return False
+
+def mimo_vision_loop():
+    """MIMO's continuous eyes: webcam + MediaPipe head-pose → gaze bucket,
+    motion/change-gated POSTs so Groq vision is called sparingly (heartbeat
+    every 30s when a face is in view; screenshot attached when gaze=screen).
+    A webcam failure never kills the task-poll loop — this is its own thread."""
+    if not _VISION_BACKEND or not _VISION_SECRET:
+        log("MIMO vision: not configured — skipping.")
+        return
+    import base64
+    try:
+        import cv2
+        import mediapipe as mp
+    except ImportError as e:
+        log(f"MIMO vision: missing dep ({e}) — run: pip install mediapipe")
+        return
+    face_mesh = mp.solutions.face_mesh.FaceMesh(
+        static_image_mode=False, max_num_faces=2, refine_landmarks=False,
+        min_detection_confidence=0.5, min_tracking_confidence=0.5)
+    cap = None
+    last_gaze, last_post = None, 0.0
+    last_faces, last_dist = 0, "mid"
+    while True:
+        try:
+            if cap is None or not cap.isOpened():
+                if cap is not None:
+                    cap.release()
+                cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                if not cap.isOpened():
+                    log("MIMO vision: webcam unavailable — retrying in 60s.")
+                    time.sleep(60)
+                    continue
+            ok_, frame = cap.read()
+            if not ok_ or frame is None:
+                time.sleep(2)
+                continue
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            res = face_mesh.process(rgb)
+            gaze, faces, dist = "none", 0, "mid"
+            if res.multi_face_landmarks:
+                faces = len(res.multi_face_landmarks)
+                lms = res.multi_face_landmarks[0].landmark   # primary (largest) face
+                gaze = _gaze_bucket(lms, 640, 480)
+                eye_w = abs(lms[263].x - lms[33].x)          # normalized eye width → distance
+                dist = "near" if eye_w > 0.24 else ("far" if eye_w < 0.10 else "mid")
+            now = time.time()
+            changed = (gaze, faces, dist) != (last_gaze, last_faces, last_dist)
+            last_gaze, last_faces, last_dist = gaze, faces, dist
+            hb = (gaze != "none" and (now - last_post) >= 30.0)
+            if not (changed or hb):
+                time.sleep(2)
+                continue
+            ok2, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok2:
+                time.sleep(2)
+                continue
+            image_b64 = base64.b64encode(buf.tobytes()).decode()
+            screenshot_b64 = ""
+            if gaze == "screen":
+                try:
+                    screenshot_b64 = _capture_screen_b64()
+                except Exception as e:
+                    log(f"MIMO vision: screenshot failed ({e})")
+            if _post_vision(image_b64, screenshot_b64, {"bucket": gaze, "faces": faces, "dist": dist, "ts": now}):
+                last_post = now
+                log(f"MIMO sees: gaze={gaze} faces={faces} dist={dist}" + (" + screen" if screenshot_b64 else ""))
+            else:
+                log("MIMO vision: upload failed — is the backend up?")
+            time.sleep(2)
+        except Exception as e:
+            log(f"MIMO vision err: {e}")
+            time.sleep(5)
+
+# ── MIMO USB WATCH ────────────────────────────────────────────────────
+def _list_usb_devices():
+    """Present USB / serial devices (friendly names) that look like dev boards.
+    Hubs, composite, Bluetooth, printers and plain mass-storage are filtered out
+    so only interesting hardware (Arduino / ESP32 / Pico / Pi) gets reported."""
+    ps = ("Get-PnpDevice -PresentOnly | Where-Object { $_.Class -in @('USB','Ports','Modem','Net') } | "
+          "Select-Object -ExpandProperty FriendlyName")
+    try:
+        p = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, text=True, timeout=30)
+        out = set()
+        for line in (p.stdout or "").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            low = line.lower()
+            if any(x in low for x in ("root hub", "composite device", "usb hub", "xbox",
+                                      "bluetooth", "mass storage", "print")):
+                continue
+            if any(x in low for x in ("arduino", "esp", "pico", "ch340", "cp210", "ftdi",
+                                      "ft232", "wch", "st-link", "jtag", "raspberry",
+                                      "serial", "usb to serial", "rndis", "gadget", "com port")):
+                out.add(line)
+        return out
+    except Exception:
+        return set()
+
+def mimo_usb_loop():
+    """Watch for new USB/serial devices and tell the backend so MIMO can offer
+    to program them ('need a hand with that?'). Own thread; never blocks polling."""
+    seen = set()
+    while True:
+        time.sleep(20)
+        try:
+            now = _list_usb_devices()
+        except Exception:
+            continue
+        new = now - seen
+        seen = now
+        if new and _VISION_BACKEND and _VISION_SECRET:
+            try:
+                requests.post(f"{_VISION_BACKEND}/api/robot/usb_event",
+                              headers={"Content-Type": "application/json",
+                                       "X-Jarvis-Token": _VISION_SECRET},
+                              json={"devices": sorted(new)}, timeout=15)
+                log(f"MIMO usb: new device(s) -> {', '.join(sorted(new))}")
+            except requests.RequestException as e:
+                log(f"MIMO usb event failed: {e}")
+
 ACTIONS = {
     "open_app": act_open_app, "list_files": act_list_files, "read_file": act_read_file,
     "find_file": act_find_file, "get_system_info": act_sys_info,
@@ -362,7 +620,14 @@ ACTIONS = {
     "execute_code": act_execute_code, "install_software": act_install,
     "shutdown": act_shutdown, "restart": act_restart,
     "send_keys": act_send_keys, "print_document": act_print, "wait": act_wait,
+    "capture_webcam": act_capture_webcam, "mimo_say": act_mimo_say,
 }
+
+# Jarvis Buddy (robot/) — merge the Arduino bridge actions.
+try:
+    ACTIONS.update(robot_bridge.robot_actions())
+except Exception as e:
+    log(f"robot bridge off ({e})")
 
 def run_task(task):
     """Execute a task's steps, stopping on the first failure. Returns the step log."""
@@ -451,6 +716,18 @@ def main():
     cfg = load_config()
     backend, secret, workspace = cfg["backend"], cfg["secret"], cfg["workspace"]
     os.makedirs(workspace, exist_ok=True)
+    global _VISION_BACKEND, _VISION_SECRET
+    _VISION_BACKEND, _VISION_SECRET = backend, secret
+
+    # Jarvis Buddy — use a saved COM port if configured, else auto-detect on first command.
+    try:
+        robot_bridge.configure(port=cfg.get("robot_port"))
+        if cfg.get("robot_port"):
+            log(f"Buddy bridge: serial {cfg['robot_port']}")
+        else:
+            log("Buddy bridge: auto-detect on COM3-COM20")
+    except Exception as e:
+        log(f"buddy bridge init failed ({e})")
 
     try:
         threading.Thread(target=lambda: HTTPServer(("127.0.0.1", FILE_SERVER_PORT),
@@ -459,6 +736,13 @@ def main():
         log(f"File browser on http://localhost:{FILE_SERVER_PORT}")
     except Exception as e:
         log(f"file server off ({e}) — Coding page file browser won't work")
+
+    # MIMO's eyes — continuous webcam + head-pose gaze, feeds the backend.
+    threading.Thread(target=mimo_vision_loop, daemon=True).start()
+    log("MIMO vision loop started (webcam + head-pose gaze)")
+    # MIMO's hands-off hardware radar — notices when a dev board gets plugged in.
+    threading.Thread(target=mimo_usb_loop, daemon=True).start()
+    log("MIMO USB watch started (Arduino/Pi plug-in detect)")
 
     headers = {"Content-Type": "application/json",
                "X-Jarvis-Token": secret,

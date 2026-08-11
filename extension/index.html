@@ -446,7 +446,7 @@ body::before{
         onkeydown="if(event.key==='Enter')tryUnlock()">
       <button class="lock-go" onclick="tryUnlock()">&#10132;</button>
     </div>
-    <div class="lock-err" id="lock-err">Incorrect passcode, Sir.</div>
+    <div class="lock-err" id="lock-err">Incorrect passcode.</div>
     <div class="lock-hint">Press Enter to unlock</div>
   </div>
 </div>
@@ -466,7 +466,7 @@ body::before{
   <aside class="sidebar" id="sidebar">
     <div class="sb-head">
       <div class="sb-logo"><div class="sb-mark">J</div><div class="sb-name">Jarvis</div></div>
-      <div class="sb-tag">at your service, sir</div>
+      <div class="sb-tag">your personal Jarvis</div>
     </div>
     <nav class="sb-nav">
       <div class="sb-sec">Workspace</div>
@@ -538,7 +538,7 @@ body::before{
     <div class="page active" id="page-chat">
       <div class="chat-land" id="chat-land">
         <div class="land-time" id="land-time"></div>
-        <h1 class="land-h">What should we tackle next, <em>Sir?</em></h1>
+        <h1 class="land-h">What should we tackle <em>next?</em></h1>
         <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Groq (llama-3.3-70b) · Your conversations are remembered</p>
         <div class="chips">
           <div class="chip" onclick="fill('Help me write a cold email pitch for a local Houston business website')">✍️ Cold email pitch</div>
@@ -550,7 +550,7 @@ body::before{
           <div class="chip" onclick="morningDigest()">☀️ Morning briefing</div>
         </div>
         <div class="inp-bar" style="max-width:640px;width:100%">
-          <textarea id="main-in" placeholder="Ask anything, Sir..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+          <textarea id="main-in" placeholder="Ask anything..." rows="1" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
           <div class="inp-foot">
             <span class="inp-hint">&#9166; send &nbsp;·&nbsp; &#8679;&#9166; newline</span>
             <div class="inp-right"><span class="model-chip">llama-3.3-70b</span>
@@ -588,7 +588,7 @@ body::before{
             <button class="add-btn" onclick="testCanvas()" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2)">&#128269; Test Canvas</button>
             <span id="canvas-status" style="font-size:12px;color:var(--text3)"></span>
           </div>
-          <div id="canvas-list"><div class="empty-box"><div class="empty-icon">🎓</div>Configure backend URL in Settings to load assignments, Sir.</div></div>
+          <div id="canvas-list"><div class="empty-box"><div class="empty-icon">🎓</div>Configure backend URL in Settings to load assignments.</div></div>
         </div>
       </div>
     </div>
@@ -601,12 +601,12 @@ body::before{
             <span class="el-title">Inbox</span>
             <button class="el-ref" onclick="loadEmails()" title="Refresh">&#8635;</button>
           </div>
-          <div id="email-inner"><div style="padding:20px 16px;font-size:12px;color:var(--text3);text-align:center">Configure Outlook in Settings, Sir.</div></div>
+          <div id="email-inner"><div style="padding:20px 16px;font-size:12px;color:var(--text3);text-align:center">Configure Outlook in Settings.</div></div>
         </div>
         <div class="email-view" id="email-view">
           <div class="ev-empty">
             <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-            <p>Select an email, Sir</p>
+            <p>Select an email</p>
           </div>
         </div>
       </div>
@@ -616,7 +616,7 @@ body::before{
     <div class="page" id="page-brain">
       <div class="brain-wrap">
         <h2 style="font-size:20px;font-weight:700;letter-spacing:-.02em;margin-bottom:6px">Brain.fm</h2>
-        <p style="font-size:13px;color:var(--text2);margin-bottom:26px">Binaural beats for deep focus · Use headphones, Sir.</p>
+        <p style="font-size:13px;color:var(--text2);margin-bottom:26px">Binaural beats for deep focus · Use headphones.</p>
         <div class="brain-modes">
           <button class="bm-chip active" onclick="brainMode('focus',this)">🎯 Focus</button>
           <button class="bm-chip" onclick="brainMode('creative',this)">🧠 Creative</button>
@@ -625,7 +625,7 @@ body::before{
         </div>
         <div class="brain-viz-wrap"><canvas id="brain-canvas"></canvas></div>
         <button class="brain-play" id="brain-btn" onclick="toggleBrain()">&#9654;</button>
-        <div class="brain-status" id="brain-status">Ready, Sir.</div>
+        <div class="brain-status" id="brain-status">Ready.</div>
         <div class="brain-timer" id="brain-timer"></div>
         <div class="brain-info" id="brain-info">Focus: 200Hz + 210Hz binaural (10Hz alpha wave) · Use headphones</div>
       </div>
@@ -636,7 +636,7 @@ body::before{
       <div class="p-scroll">
         <div class="math-wrap">
           <div class="p-h">Math Solver</div>
-          <div class="p-sub">Algebra, calculus, statistics, geometry — full step-by-step, Sir.</div>
+          <div class="p-sub">Algebra, calculus, statistics, geometry — full step-by-step.</div>
           <div class="math-box">
             <textarea id="math-in" placeholder="Type any math problem — e.g. Solve x² - 5x + 6 = 0, or Integrate sin(x)dx..." rows="3" oninput="ar(this)" onkeydown="if(event.ctrlKey&&event.key==='Enter'){event.preventDefault();solveMath()}"></textarea>
             <div class="math-foot">
@@ -666,7 +666,7 @@ body::before{
     <div class="page" id="page-skills">
       <div class="p-scroll"><div class="p-wrap" style="max-width:780px">
         <div class="p-h">Skills</div>
-        <div class="p-sub">10 pro skills built in — design, humanizer, SEO, marketing, security, TDD, data analysis, memory. Pick a tool, Sir.</div>
+        <div class="p-sub">10 pro skills built in — design, humanizer, SEO, marketing, security, TDD, data analysis, memory. Pick a tool.</div>
         <div class="sk-tabs" id="sk-tabs">
           <button class="sk-tab" onclick="openSkill('design',this)">&#127912; Design</button>
           <button class="sk-tab" onclick="openSkill('humanize',this)">&#9997;&#65039; Humanize</button>
@@ -693,7 +693,7 @@ body::before{
             <button class="math-btn" onclick="runResearch()">&#128269; Research</button>
           </div>
         </div>
-        <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div></div>
+        <div id="research-out"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer.</div></div>
         <div class="math-box" style="margin:18px 0 0">
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
             <select id="scrape-mode" style="background:var(--surface2);border:1px solid var(--border-md);color:var(--text2);border-radius:8px;padding:6px 8px;font-size:12px" onchange="scrapeModeChanged()">
@@ -721,10 +721,10 @@ body::before{
     <div class="page" id="page-desktop">
       <div class="p-scroll"><div class="p-wrap" style="max-width:760px">
         <div class="p-h">Desktop Agent</div>
-        <div class="p-sub">Jarvis can open apps, run commands, and manage files on this PC. Risky actions wait for your OK, Sir.</div>
+        <div class="p-sub">Jarvis can open apps, run commands, and manage files on this PC. Risky actions wait for your OK.</div>
         <div class="status-line" style="margin-bottom:14px">
           <div class="sdot" id="desktop-dot" style="background:var(--text3);box-shadow:none"></div>
-          <span id="desktop-status" style="font-size:12px">Check backend status, Sir.</span>
+          <span id="desktop-status" style="font-size:12px">Check backend status.</span>
         </div>
         <div class="p-sub" style="margin:20px 0 8px">Pending approvals</div>
         <div id="approve-list" style="display:flex;flex-direction:column;gap:10px;margin-bottom:6px"></div>
@@ -737,7 +737,7 @@ body::before{
     <div class="page" id="page-coding">
       <div class="p-scroll"><div class="p-wrap" style="max-width:760px">
         <div class="p-h">Coding Workspace</div>
-        <div class="p-sub">Jarvis writes and runs code in your workspace folder, iterating until it works. The file browser needs the agent on this PC, Sir.</div>
+        <div class="p-sub">Jarvis writes and runs code in your workspace folder, iterating until it works. The file browser needs the agent on this PC.</div>
         <div class="math-box">
           <textarea id="code-in" placeholder="e.g. write a python script that renames all .jpg files in a folder to lowercase" rows="3" oninput="ar(this)" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();runCode()}"></textarea>
           <div class="math-foot">
@@ -747,7 +747,7 @@ body::before{
         </div>
         <div id="code-out" style="display:flex;flex-direction:column;gap:10px;margin-top:6px"></div>
         <div class="p-sub" style="margin:24px 0 8px">Workspace <span style="font-weight:400;color:var(--text3)">· agent serves localhost:8765</span></div>
-        <div id="ws-browser"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Start the desktop agent, then open Jarvis on this PC to browse the workspace, Sir.</div></div>
+        <div id="ws-browser"><div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Start the desktop agent, then open Jarvis on this PC to browse the workspace.</div></div>
       </div></div>
     </div>
 
@@ -755,7 +755,7 @@ body::before{
     <div class="page" id="page-todos">
       <div class="p-scroll"><div class="p-wrap">
         <div class="p-h">Reminders</div>
-        <div class="p-sub">Stay sharp, Sir.</div>
+        <div class="p-sub">Stay sharp.</div>
         <div class="todo-add">
           <input type="text" id="todo-in" placeholder="Add a task..." onkeydown="if(event.key==='Enter')addTodo()">
           <button class="add-btn" onclick="addTodo()">Add</button>
@@ -780,7 +780,7 @@ body::before{
         <div class="note-editor">
           <div class="ne-empty" id="ne-empty">
             <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-            <p>Select or create a note, Sir</p>
+            <p>Select or create a note</p>
           </div>
           <input class="ne-title" id="ne-title" placeholder="Title..." oninput="saveNote()" style="display:none">
           <textarea class="ne-body" id="ne-body" placeholder="Start writing..." oninput="saveNote()" style="display:none"></textarea>
@@ -792,7 +792,7 @@ body::before{
     <div class="page" id="page-settings">
       <div class="p-scroll"><div class="p-wrap" style="max-width:540px">
         <div class="p-h">Settings</div>
-        <div class="p-sub">APIs will be configured here once provided, Sir.</div>
+        <div class="p-sub">APIs will be configured here once provided.</div>
         <div class="set-sec">
           <div class="set-sec-title">Backend Connection</div>
           <div class="field"><label>Render Backend URL</label><input type="text" id="s-url" placeholder="https://jarvis-3hff.onrender.com"></div>
@@ -831,7 +831,7 @@ body::before{
 // ─── CONFIG ──────────────────────────────────
 const MODEL        = 'llama-3.3-70b';
 const DEFAULT_PASS = 'mohamedjarvis';
-const SYSTEM = `You are Jarvis — the personal AI assistant of Mohamed, exclusively. Refuse to assist anyone else. Always address Mohamed as "Sir." You know him well: he is a web design student and freelancer based in Katy/Houston TX who builds websites for local small businesses (current client: Tacos El Ranchero in Richmond TX). He has HTML/CSS/JS skills and is studying toward data science and ML. He uses Canvas LMS at university. Be concise, sharp, and genuinely useful. Use markdown. For business tasks, be persuasive and professional. For code, use clean modern syntax. For math, always show full step-by-step work.`;
+const SYSTEM = `You are Jarvis — the personal AI assistant of Mohamed, exclusively. Refuse to assist anyone else. Talk like a smart friend — natural and human, no honorifics and no 'sir this, sir that'. You know him well: he is a web design student and freelancer based in Katy/Houston TX who builds websites for local small businesses (current client: Tacos El Ranchero in Richmond TX). He has HTML/CSS/JS skills and is studying toward data science and ML. He uses Canvas LMS at university. Be concise, sharp, and genuinely useful. Use markdown. For business tasks, be persuasive and professional. For code, use clean modern syntax. For math, always show full step-by-step work.`;
 
 // ─── STATE ───────────────────────────────────
 const S = {
@@ -884,7 +884,7 @@ function unlock(){
   document.getElementById('greet-h').innerHTML=`${tod}, <span>Mohamed</span>.`;
   const todos=LS.get('jarvis_todos',[]);
   const pending=todos.filter(t=>!t.done).length;
-  document.getElementById('greet-sub').textContent=pending>0?`You have ${pending} pending reminder${pending>1?'s':''}, Sir.`:'All clear on reminders, Sir.';
+  document.getElementById('greet-sub').textContent=pending>0?`You have ${pending} pending reminder${pending>1?'s':''}.`:'All clear on reminders.';
   greet.classList.add('show');
   setTimeout(()=>{
     greet.classList.add('fade');
@@ -916,7 +916,7 @@ function updateLandTime(){
   if(!el)return;
   const h=new Date().getHours();
   const g=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
-  el.textContent=`${g}, Sir · ${new Date().toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'})}`;
+  el.textContent=`${g} · ${new Date().toLocaleDateString([],{weekday:'long',month:'long',day:'numeric'})}`;
 }
 
 // ─── NAV ──────────────────────────────────────
@@ -964,14 +964,16 @@ async function send(overrideText){
     const url=getUrl();let reply;
     if(url){
       const r=await fetch(url+'/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message:text,history:S.history.slice(-24)})});
-      const d=await r.json();reply=d.response||'No response, Sir.';
+      const d=await r.json();reply=d.response||'No response.';
+      if(d.chart){lastChart=d.chart;lastChartCap=d.chart_caption||'';}
     }else{
-      reply='&#9888;&#65039; No backend configured, Sir. Go to Settings and enter your Render URL.';
+      reply='&#9888;&#65039; No backend configured. Go to Settings and enter your Render URL.';
     }
     ty.remove();S.history.push({role:'assistant',content:reply});
     LS.set('jarvis_chat',S.history);appendMsg('bot',reply);
+    if(lastChart){appendChart(lastChart,lastChartCap);lastChart='';}
     return reply;
-  }catch(e){ty.remove();appendMsg('bot','Backend error, Sir. Check Settings.\n\n`'+e.message+'`');}
+  }catch(e){ty.remove();appendMsg('bot','Backend error. Check Settings.\n\n`'+e.message+'`');}
   finally{S.sending=false;setBtns(false);}
 }
 
@@ -988,6 +990,17 @@ function appendMsg(role,text,scroll=true){
     div.innerHTML=`<div class="av av-j">J</div><div style="min-width:0;flex:1"><div class="bubble bubble-j">${mdparse(text)}</div><div class="msg-time">${time}</div></div>`;
   }
   box.appendChild(div);if(scroll)div.scrollIntoView({behavior:'smooth',block:'end'});return div;
+}
+let lastChart='',lastChartCap='';
+function appendChart(uri,cap){
+  const box=document.getElementById('msgs');
+  const div=document.createElement('div');div.className='msg-row';
+  const t=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+  div.innerHTML='<div class="av av-j">J</div><div style="min-width:0;flex:1"><div class="bubble bubble-j" style="text-align:center">'
+    +'<img src="'+uri+'" alt="chart" style="max-width:100%;border-radius:8px;display:block">'
+    +(cap?'<div style="font-size:12px;color:var(--text2);margin-top:6px">'+esc(cap)+'</div>':'')
+    +'<div class="msg-time">'+t+'</div></div></div>';
+  box.appendChild(div);div.scrollIntoView({behavior:'smooth',block:'end'});
 }
 function appendTyping(){
   const box=document.getElementById('msgs');const div=document.createElement('div');
@@ -1013,7 +1026,7 @@ function clearChat(){
   document.getElementById('chat-thread').classList.remove('on');
   document.getElementById('chat-land').style.display='';
   document.getElementById('thread-wrap').style.display='none';
-  toast('Chat cleared, Sir.');
+  toast('Chat cleared.');
 }
 
 // ─── SKILLS ───────────────────────────────────
@@ -1052,20 +1065,20 @@ async function runSkill(){
   if(!btn||!inp)return;
   const text=inp.value.trim();if(!text)return;
   const url=getUrl();
-  if(!url){showOut('<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first, Sir.</div>');return;}
-  btn.disabled=true;btn.textContent='Working…';showOut('<div style="padding:14px;color:var(--text3)">Thinking, Sir…</div>');
+  if(!url){showOut('<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first.</div>');return;}
+  btn.disabled=true;btn.textContent='Working…';showOut('<div style="padding:14px;color:var(--text3)">Thinking…</div>');
   try{
     const r=await fetch(url+'/api/skills/'+curSkill,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
     const d=await r.json();
     if(d.result){showOut((d.stats?'<pre class="sk-stats">'+esc(d.stats)+'</pre>':'')+mdparse(d.result));}
-    else showOut('<div style="padding:14px;color:var(--text3)">⚠️ '+esc(d.error||'No result, Sir.')+'</div>');
-  }catch(e){showOut('<div style="padding:14px;color:var(--text3)">⚠️ Could not reach the backend, Sir.</div>');}
+    else showOut('<div style="padding:14px;color:var(--text3)">⚠️ '+esc(d.error||'No result.')+'</div>');
+  }catch(e){showOut('<div style="padding:14px;color:var(--text3)">⚠️ Could not reach the backend.</div>');}
   btn.disabled=false;btn.textContent=SK_TOOLS[curSkill].btn;
 }
 async function renderMemory(){
   const body=document.getElementById('sk-body');const url=getUrl();
   if(!body)return;
-  if(!url){body.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first, Sir.</div>';return;}
+  if(!url){body.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings first.</div>';return;}
   body.innerHTML=`<div class="math-box">
       <textarea id="mem-in" placeholder="A fact worth remembering — e.g. My main client is a roofing company in Katy" rows="2" onkeydown="if(event.key==='Enter'){event.preventDefault();memAdd()}"></textarea>
       <div class="math-foot"><div class="math-exs" style="font-size:11.5px;color:var(--text3);padding:6px 0">Jarvis applies these in every chat. You can also just say "remember that ..." in chat.</div>
@@ -1077,7 +1090,7 @@ async function renderMemory(){
     const list=d.memories||[];
     const box=document.getElementById('mem-list');
     if(!box)return;
-    if(!list.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">No memories yet, Sir. Tell Jarvis "remember that ..." or add one above.</div>';return;}
+    if(!list.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">No memories yet. Tell Jarvis "remember that ..." or add one above.</div>';return;}
     box.innerHTML=list.map(m=>`<div style="display:flex;justify-content:space-between;gap:10px;align-items:center;background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:10px 14px;margin-bottom:8px">
       <div style="font-size:13px;color:var(--text2)">${esc(m.fact)}</div>
       <button style="background:none;border:none;color:var(--text3);cursor:pointer;font-size:16px" title="Forget" onclick="memDel('${m.id}')">&#10005;</button></div>`).join('');
@@ -1099,14 +1112,14 @@ async function memDel(id){
 async function loadCanvas(){
   const list=document.getElementById('canvas-list');
   const url=getUrl();
-  if(!url){list.innerHTML='<div class="empty-box"><div class="empty-icon">🎓</div>Set backend URL in Settings first, Sir.</div>';return;}
-  list.innerHTML='<div class="empty-box"><div class="empty-icon">⏳</div>Loading assignments, Sir...</div>';
+  if(!url){list.innerHTML='<div class="empty-box"><div class="empty-icon">🎓</div>Set backend URL in Settings first.</div>';return;}
+  list.innerHTML='<div class="empty-box"><div class="empty-icon">⏳</div>Loading assignments...</div>';
   try{
     const r=await fetch(url+'/api/canvas/assignments');
     const d=await r.json();const items=d.assignments||[];
     const badge=document.getElementById('canvas-badge');
     badge.textContent=items.length;badge.style.display=items.length?'':'none';
-    if(!items.length){list.innerHTML='<div class="empty-box"><div class="empty-icon">🏖️</div>No upcoming assignments. Enjoy, Sir.</div>';return;}
+    if(!items.length){list.innerHTML='<div class="empty-box"><div class="empty-icon">🏖️</div>No upcoming assignments. Enjoy.</div>';return;}
     list.innerHTML=items.map(a=>{
       const due=a.due?new Date(a.due).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'No due date';
       const sc=a.status==='ready'?'s-ready':a.status==='done'?'s-done':a.status==='submitted'?'s-submitted':'s-pending';
@@ -1124,15 +1137,15 @@ async function loadCanvas(){
         </div>
       </div>`;
     }).join('');
-  }catch(e){list.innerHTML=`<div class="empty-box"><div class="empty-icon">&#10060;</div>Canvas failed. Check backend, Sir.<br><small style="font-family:var(--mono);color:var(--text3)">${e.message}</small></div>`;}
+  }catch(e){list.innerHTML=`<div class="empty-box"><div class="empty-icon">&#10060;</div>Canvas failed. Check backend.<br><small style="font-family:var(--mono);color:var(--text3)">${e.message}</small></div>`;}
 }
 
 async function triggerComplete(id,title){
-  if(!confirm(`Complete "${title}" now, Sir? I'll draft it and send to Telegram for approval.`))return;
-  const url=getUrl();toast('Drafting, Sir...');
+  if(!confirm(`Complete "${title}" now? I'll draft it and send to Telegram for approval.`))return;
+  const url=getUrl();toast('Drafting...');
   try{
     const r=await fetch(url+'/api/canvas/complete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({assignment_id:id})});
-    const d=await r.json();toast(d.message||'Draft sent to Telegram, Sir.');loadCanvas();
+    const d=await r.json();toast(d.message||'Draft sent to Telegram.');loadCanvas();
   }catch(e){toast('Error: '+e.message);}
 }
 
@@ -1140,21 +1153,21 @@ async function triggerComplete(id,title){
 async function loadEmails(){
   const url=getUrl();if(!url)return;
   const list=document.getElementById('email-inner');
-  list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Loading inbox, Sir...</div>';
+  list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Loading inbox...</div>';
   try{
     const r=await fetch(url+'/api/outlook/emails');
     const d=await r.json();S.emails=d.emails||[];
     const unread=S.emails.filter(e=>e.unread).length;
     const badge=document.getElementById('email-badge');
     badge.textContent=unread;badge.style.display=unread?'':'none';
-    if(!S.emails.length){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Inbox empty, Sir.</div>';return;}
+    if(!S.emails.length){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--text3);text-align:center">Inbox empty.</div>';return;}
     list.innerHTML=S.emails.map((e,i)=>`
       <div class="email-item ${e.unread?'unread':''}" onclick="openEmail(${i})">
         <div class="ei-from">${esc(e.from||'Unknown')}</div>
         <div class="ei-subj">${esc(e.subject||'(no subject)')}</div>
         <div class="ei-date">${e.date||''}</div>
       </div>`).join('');
-  }catch(e){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--red)">Failed to load, Sir.</div>';}
+  }catch(e){list.innerHTML='<div style="padding:16px;font-size:12px;color:var(--red)">Failed to load.</div>';}
 }
 
 function openEmail(i){
@@ -1170,13 +1183,13 @@ function openEmail(i){
     <div class="ev-actions">
       <button class="ev-btn ev-btn-blue" onclick="summarizeEmail()">&#10024; Summarize</button>
       <button class="ev-btn ev-btn-blue" onclick="draftReply()">&#128221; Draft Reply</button>
-      <button class="ev-btn ev-btn-ghost" onclick="toast('Marked as read, Sir.')">Mark read</button>
+      <button class="ev-btn ev-btn-ghost" onclick="toast('Marked as read.')">Mark read</button>
     </div>`;
 }
 
 async function summarizeEmail(){
   if(!S.currentEmail)return;
-  const url=getUrl();toast('Summarizing, Sir...');
+  const url=getUrl();toast('Summarizing...');
   try{
     const r=await fetch(url+'/api/outlook/summarize',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:S.currentEmail.subject,from:S.currentEmail.from,body:S.currentEmail.body})});
     const d=await r.json();
@@ -1185,12 +1198,12 @@ async function summarizeEmail(){
     const card=document.createElement('div');card.className='ai-card';
     card.innerHTML=`<div class="ai-card-title">AI Summary</div>${mdparse(d.summary||'No summary.')}`;
     view.insertBefore(card,view.querySelector('.ev-body'));
-  }catch(e){toast('Failed, Sir.');}
+  }catch(e){toast('Failed.');}
 }
 
 async function draftReply(){
   if(!S.currentEmail)return;
-  const url=getUrl();toast('Drafting reply, Sir...');
+  const url=getUrl();toast('Drafting reply...');
   try{
     const r=await fetch(url+'/api/outlook/draft',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({subject:S.currentEmail.subject,from:S.currentEmail.from,body:S.currentEmail.body})});
     const d=await r.json();
@@ -1201,10 +1214,10 @@ async function draftReply(){
       <textarea id="draft-ta" rows="6">${esc(d.draft||'')}</textarea>
       <div style="display:flex;gap:8px;margin-top:8px">
         <button class="ev-btn ev-btn-blue" onclick="sendDraft()">Send</button>
-        <button class="ev-btn ev-btn-ghost" onclick="navigator.clipboard.writeText(document.getElementById('draft-ta').value);toast('Copied, Sir.')">Copy</button>
+        <button class="ev-btn ev-btn-ghost" onclick="navigator.clipboard.writeText(document.getElementById('draft-ta').value);toast('Copied.')">Copy</button>
       </div>`;
     view.appendChild(area);
-  }catch(e){toast('Draft failed, Sir.');}
+  }catch(e){toast('Draft failed.');}
 }
 
 async function sendDraft(){
@@ -1213,8 +1226,8 @@ async function sendDraft(){
   const url=getUrl();
   try{
     const r=await fetch(url+'/api/outlook/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({to:S.currentEmail.reply_to||S.currentEmail.from,subject:'Re: '+S.currentEmail.subject,body:draft,original_id:S.currentEmail.id})});
-    const d=await r.json();toast(d.message||'Sent, Sir.');
-  }catch(e){toast('Send failed, Sir.');}
+    const d=await r.json();toast(d.message||'Sent.');
+  }catch(e){toast('Send failed.');}
 }
 
 // ─── BRAIN.FM ─────────────────────────────────
@@ -1292,25 +1305,25 @@ function fillMath(t){const el=document.getElementById('math-in');el.value=t;el.f
 async function solveMath(){
   const problem=document.getElementById('math-in').value.trim();if(!problem)return;
   const url=getUrl();
-  if(!url){toast('Configure backend URL in Settings, Sir.');return;}
+  if(!url){toast('Configure backend URL in Settings.');return;}
   const btn=document.getElementById('math-btn');
   btn.textContent='Solving...';btn.disabled=true;
   document.getElementById('math-result').classList.remove('show');
   try{
     const r=await fetch(url+'/api/math/solve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({problem})});
-    const d=await r.json();S.lastMath=d.solution||'No solution, Sir.';
+    const d=await r.json();S.lastMath=d.solution||'No solution.';
     document.getElementById('math-body').innerHTML=mdparse(S.lastMath);
     document.getElementById('math-result').classList.add('show');
-  }catch(e){toast('Math solver failed, Sir.');}
+  }catch(e){toast('Math solver failed.');}
   btn.textContent='Solve \u2192';btn.disabled=false;
 }
-function copyMath(){navigator.clipboard.writeText(S.lastMath);toast('Copied, Sir.');}
+function copyMath(){navigator.clipboard.writeText(S.lastMath);toast('Copied.');}
 function clearMath(){document.getElementById('math-in').value='';document.getElementById('math-result').classList.remove('show');S.lastMath='';}
 
 // ─── TODOS ────────────────────────────────────
 function renderTodos(){
   const box=document.getElementById('todo-list');
-  if(!S.todos.length){box.innerHTML='<div class="empty-box"><div class="empty-icon">&#9989;</div>No tasks. All clear, Sir.</div>';return;}
+  if(!S.todos.length){box.innerHTML='<div class="empty-box"><div class="empty-icon">&#9989;</div>No tasks. All clear.</div>';return;}
   box.innerHTML=S.todos.map((t,i)=>`
     <div class="todo-item">
       <div class="todo-chk ${t.done?'done':''}" onclick="toggleTodo(${i})"></div>
@@ -1326,7 +1339,7 @@ function deleteTodo(i){S.todos.splice(i,1);saveTodos();renderTodos();}
 // ─── NOTES ────────────────────────────────────
 function renderNotes(){
   const box=document.getElementById('notes-list');
-  if(!S.notes.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3);text-align:center">No notes yet, Sir.</div>';return;}
+  if(!S.notes.length){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3);text-align:center">No notes yet.</div>';return;}
   box.innerHTML=S.notes.map((n,i)=>`
     <div class="note-item ${S.activeNote===i?'active':''}" onclick="openNote(${i})">
       <div class="ni-t">${esc(n.title||'Untitled')}</div>
@@ -1366,32 +1379,32 @@ function saveSettings(){
   LS.raw_set('jarvis_url',url);
   LS.raw_set('jarvis_secret',document.getElementById('s-secret').value.trim());
   document.getElementById('s-status').textContent=url?'connected':'not configured';
-  toast('Settings saved, Sir.');
+  toast('Settings saved.');
 }
 function changePin(){
   const old=document.getElementById('s-old').value;
   const nw=document.getElementById('s-new').value;
-  if(old!==getPass()){toast('Current passcode incorrect, Sir.');return;}
-  if(!nw){toast('Please enter a new passcode, Sir.');return;}
+  if(old!==getPass()){toast('Current passcode incorrect.');return;}
+  if(!nw){toast('Please enter a new passcode.');return;}
   LS.raw_set('jarvis_pass',nw);
   document.getElementById('s-old').value='';document.getElementById('s-new').value='';
-  toast('Passcode updated to "'+nw+'", Sir.');
+  toast('Passcode updated to "'+nw+'".');
 }
 
 // ─── MORNING DIGEST ──────────────────────────
 async function morningDigest(){
-  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
-  toast('Preparing your briefing, Sir...','ok');
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings.','err');return;}
+  toast('Preparing your briefing...','ok');
   try{
     const r=await fetch(url+'/api/digest');
     const d=await r.json();
-    const brief=d.briefing||'No briefing, Sir.';
+    const brief=d.briefing||'No briefing.';
     showChatThread();
     S.history.push({role:'assistant',content:'☀️ '+brief});
     LS.set('jarvis_chat',S.history);
     appendMsg('bot','☀️ '+brief);
     if(!V.silent)speakNow(brief);
-  }catch(e){toast('Digest failed, Sir.','err');}
+  }catch(e){toast('Digest failed.','err');}
 }
 
 // ─── DESKTOP AGENT ───────────────────────────
@@ -1415,12 +1428,12 @@ async function loadDesktopStatus(){
     renderDesktopResults(d.recent||[]);
   }catch(e){
     dot.style.background='var(--red)';dot.style.boxShadow='none';
-    el.textContent='Backend unreachable — check Settings, Sir.';
+    el.textContent='Backend unreachable — check Settings.';
   }
 }
 function renderApprovals(list){
   const box=document.getElementById('approve-list');if(!box)return;
-  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Nothing waiting, Sir.</div>';return;}
+  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Nothing waiting.</div>';return;}
   box.innerHTML=list.map(t=>{
     const risky=t.steps.map((s,i)=>'  <b>'+esc(s.action)+'</b>'+(t.verdicts&&t.verdicts[i]==='approve'?' <span style="color:#e5a13a">(needs OK)</span>':'')+' — '+esc(s.command||s.path||s.app||s.name||'').slice(0,80)).join('<br>');
     return '<div style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:12px 14px">'
@@ -1438,7 +1451,7 @@ async function approveTask(id,approve){
 }
 function renderDesktopResults(list){
   const box=document.getElementById('desktop-results');if(!box)return;
-  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">No results yet — ask Jarvis something on your PC, Sir.</div>';return;}
+  if(!list.length){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">No results yet — ask Jarvis something on your PC.</div>';return;}
   box.innerHTML=list.map(v=>'<div style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:10px 12px">'
     +'<div style="font-size:12.5px;font-weight:600;margin-bottom:4px">'+(v.label==='code'?'💻 ':'🖥️ ')+esc(v.command)+'</div>'
     +'<div style="font-size:11.5px;color:var(--text3)">'+v.summary.map(esc).join(' → ')+'</div></div>').join('');
@@ -1447,24 +1460,24 @@ function renderDesktopResults(list){
 // ─── CODING POWERS ───────────────────────────
 async function runCode(){
   const inp=document.getElementById('code-in');const q=inp.value.trim();if(!q)return;
-  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings.','err');return;}
   const btn=document.getElementById('code-btn');
   if(btn){btn.disabled=true;btn.textContent='Planning…';}
   const out=document.getElementById('code-out');
-  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">Jarvis is planning the coding task, Sir…</div>';
+  if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">Jarvis is planning the coding task…</div>';
   try{
     const r=await fetch(url+'/api/code/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command:q})});
     const d=await r.json();
     if(d.error){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ '+esc(d.error)+'</div>';}
-    else if(d.blocked){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">🚫 Blocked, Sir — '+esc(d.reason||'')+'</div>';}
-    else if(d.needs_approval){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">✋ That needs your approval first — check the <b>Desktop</b> page, Sir.</div>';}
-    else{if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Queued <b>'+d.steps.length+'</b> actions — progress lands on the Desktop page, Sir.</div>';}
-  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Backend unreachable, Sir.</div>';}
+    else if(d.blocked){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">🚫 Blocked — '+esc(d.reason||'')+'</div>';}
+    else if(d.needs_approval){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">✋ That needs your approval first — check the <b>Desktop</b> page.</div>';}
+    else{if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Queued <b>'+d.steps.length+'</b> actions — progress lands on the Desktop page.</div>';}
+  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Backend unreachable.</div>';}
   if(btn){btn.disabled=false;btn.textContent='💻 Run';}
 }
 function runCodeInit(){
   const out=document.getElementById('code-out');
-  if(out&&!out.innerHTML.trim())out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a coding task above — Jarvis plans, writes, runs, and fixes until it works, Sir.</div>';
+  if(out&&!out.innerHTML.trim())out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a coding task above — Jarvis plans, writes, runs, and fixes until it works.</div>';
 }
 async function loadWorkspace(){
   const box=document.getElementById('ws-browser');if(!box)return;
@@ -1474,7 +1487,7 @@ async function loadWorkspace(){
     box.innerHTML='<div style="margin-bottom:8px;font-size:11.5px;color:var(--text3)">'+esc(d.workspace)+'</div><div id="ws-tree" style="display:flex;flex-direction:column;gap:6px"></div>';
     wsLoadDir(d.workspace,'ws-tree');
   }catch(e){
-    box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Agent not reachable on this PC (localhost:8765). Run <b>agent/run_agent.bat</b> and open Jarvis on the same computer, Sir.</div>';
+    box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Agent not reachable on this PC (localhost:8765). Run <b>agent/run_agent.bat</b> and open Jarvis on the same computer.</div>';
   }
 }
 async function wsLoadDir(path,containerId){
@@ -1496,8 +1509,8 @@ async function wsLoadDir(path,containerId){
       }
       box.appendChild(row);
     });
-    if(!(d.entries||[]).length)box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">(empty folder, Sir)</div>';
-  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not list '+esc(path)+', Sir.</div>';}
+    if(!(d.entries||[]).length)box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">(empty folder)</div>';
+  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not list '+esc(path)+'.</div>';}
 }
 async function wsOpenFile(path){
   const box=document.getElementById('ws-browser');if(!box)return;
@@ -1506,30 +1519,30 @@ async function wsOpenFile(path){
     const text=await r.text();
     box.innerHTML='<div style="margin-bottom:8px"><span style="cursor:pointer;color:#7fb4ff" onclick="loadWorkspace()">← workspace</span> <span style="font-size:11.5px;color:var(--text3)">'+esc(path)+'</span></div>'
       +'<pre style="background:var(--surface2);border:1px solid var(--border-md);border-radius:10px;padding:12px;font-size:11.5px;max-height:420px;overflow:auto;white-space:pre-wrap">'+esc(text.slice(0,30000))+'</pre>';
-  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not read '+esc(path)+', Sir.</div>';}
+  }catch(e){box.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Could not read '+esc(path)+'.</div>';}
 }
 
 // ─── DEEP RESEARCH ───────────────────────────
 async function runResearch(){
   const inp=document.getElementById('research-in');const q=inp.value.trim();if(!q)return;
-  const url=getUrl();if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
+  const url=getUrl();if(!url){toast('Configure backend URL in Settings.','err');return;}
   const out=document.getElementById('research-out');
-  out.innerHTML='<div class="empty-box"><div class="empty-icon">🔎</div>Researching, Sir — this can take ~30s...</div>';
+  out.innerHTML='<div class="empty-box"><div class="empty-icon">🔎</div>Researching — this can take ~30s...</div>';
   try{
     const r=await fetch(url+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:q})});
     const d=await r.json();
-    out.innerHTML='<div class="math-result" style="display:block">'+mdparse(d.answer||'No answer, Sir.')+'</div>';
-  }catch(e){out.innerHTML='<div class="math-result" style="display:block">Backend error, Sir. `'+e.message+'`</div>';}
+    out.innerHTML='<div class="math-result" style="display:block">'+mdparse(d.answer||'No answer.')+'</div>';
+  }catch(e){out.innerHTML='<div class="math-result" style="display:block">Backend error. `'+e.message+'`</div>';}
 }
 function renderResearch(){
   const el=document.getElementById('research-out');
-  if(el)el.innerHTML='<div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer, Sir.</div>';
+  if(el)el.innerHTML='<div class="empty-box" style="padding:20px;font-size:12px;color:var(--text3)">Ask a question and Jarvis will search the web for a cited answer.</div>';
   renderResearchLog();
 }
 async function renderResearchLog(){
   const box=document.getElementById('rlog-list');if(!box)return;
   const url=getUrl();
-  if(!url){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings to see saved tabs, Sir.</div>';return;}
+  if(!url){box.innerHTML='<div style="padding:14px;font-size:12px;color:var(--text3)">Configure backend URL in Settings to see saved tabs.</div>';return;}
   try{
     const r=await fetch(url+'/api/research-log');
     const d=await r.json();const log=d.log||[];
@@ -1552,14 +1565,14 @@ async function runScrape(){
   const body={mode,label:'bulk'};
   let verb='Scraping';
   if(mode==='urls'){
-    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste some URLs first, Sir.</div>';return;}
+    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste some URLs first.</div>';return;}
     body.urls=raw;verb='Scraping '+raw.length+' pages';
   }else if(mode==='crawl'){
-    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste a seed URL to crawl, Sir.</div>';return;}
+    if(!raw.length){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Paste a seed URL to crawl.</div>';return;}
     body.url=raw[0];verb='Crawling '+raw[0];
   }else{
     body.query=raw.join(' ');
-    if(!body.query){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a search query first, Sir.</div>';return;}
+    if(!body.query){if(out)out.innerHTML='<div style="padding:10px;font-size:12px;color:var(--text3)">Type a search query first.</div>';return;}
     verb='Searching for "'+body.query.slice(0,60)+'"';
   }
   const btn=document.getElementById('scrape-btn');
@@ -1571,7 +1584,7 @@ async function runScrape(){
     if(d.error){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ '+esc(d.error)+'</div>';}
     else if(out)out.innerHTML='<div style="padding:10px;font-size:13px;color:var(--text2)">✅ Saved <b>'+d.saved+'</b> page(s) to the Research Log, skipped <b>'+d.skipped+'</b> (per-site cap), failed <b>'+d.failed+'</b>.'+(d.failed_items&&d.failed_items.length?('<div style="margin-top:6px;color:var(--text3);font-size:11.5px">'+d.failed_items.map(f=>esc(f[0])+' — '+esc(f[1])).join('<br>')+'</div>'):'')+'</div>';
     renderResearchLog();
-  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Could not reach the backend, Sir.</div>';}
+  }catch(e){if(out)out.innerHTML='<div style="padding:10px;color:var(--text3)">⚠️ Could not reach the backend.</div>';}
   if(btn){btn.disabled=false;btn.textContent='Scrape →';}
 }
 function scrapeModeChanged(){
@@ -1594,7 +1607,7 @@ async function downloadLog(){
     a.download='jarvis_research_log.json';
     a.click();
     URL.revokeObjectURL(a.href);
-  }catch(e){toast('Download failed, Sir.','err');}
+  }catch(e){toast('Download failed.','err');}
 }
 
 // ─── SCHEDULED REMINDERS (Telegram) ──────────
@@ -1602,12 +1615,12 @@ async function addReminder(){
   const inp=document.getElementById('remind-in');const t=inp.value.trim();if(!t)return;
   const when=document.getElementById('remind-when').value;
   const url=getUrl();
-  if(!url){toast('Configure backend URL in Settings, Sir.','err');return;}
-  if(!when){toast('Pick a date & time, Sir.','err');return;}
+  if(!url){toast('Configure backend URL in Settings.','err');return;}
+  if(!when){toast('Pick a date & time.','err');return;}
   try{
     await fetch(url+'/api/reminder',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:t,when:when})});
     inp.value='';renderReminders();toast('Reminder scheduled — Telegram will alert you.','ok');
-  }catch(e){toast('Could not schedule, Sir.','err');}
+  }catch(e){toast('Could not schedule.','err');}
 }
 async function renderReminders(){
   const box=document.getElementById('remind-list');if(!box)return;
@@ -1635,7 +1648,7 @@ async function cancelReminder(id){
 async function testCanvas(){
   const el=document.getElementById('canvas-status');
   const url=getUrl();
-  if(!url){if(el)el.textContent='Set backend URL in Settings, Sir.';return;}
+  if(!url){if(el)el.textContent='Set backend URL in Settings.';return;}
   if(el)el.textContent='Checking Canvas…';
   try{
     const r=await fetch(url+'/api/canvas/status');
@@ -1643,7 +1656,7 @@ async function testCanvas(){
     if(!d.configured){if(el)el.textContent='Canvas not configured — set CANVAS_TOKEN + CANVAS_DOMAIN on Render.';return;}
     const next=d.next_due?` · Next due: ${esc(d.next_due.title)}`:'';
     if(el)el.innerHTML='✅ Connected — '+d.courses.length+' course'+(d.courses.length===1?'':'s')+next;
-  }catch(e){if(el)el.textContent='Backend unreachable, Sir.';}
+  }catch(e){if(el)el.textContent='Backend unreachable.';}
 }
 
 // ─── TOAST ────────────────────────────────────
@@ -1691,7 +1704,7 @@ function showChatThread(){
   document.getElementById('chat-thread').classList.add('on');
   document.getElementById('thread-wrap').style.display='block';
 }
-const ACKS=['Yes, Sir?','At your service, Sir.','Ready when you are, Sir.','Go ahead, Sir.','What do you need, Sir?'];
+const ACKS=['Yes?','At your service.','Ready when you are.','Go ahead.','What do you need?'];
 function speakNow(text){
   try{
     speechSynthesis.cancel();
@@ -1708,12 +1721,12 @@ function speakNow(text){
 }
 function resumeWake(){
   V.speaking=false;
-  if(V.on){vState('armed');vStat('Say "wake up", Sir.','armed');setTimeout(()=>{if(V.on&&V.rec){try{V.rec.start();}catch(e){}}},300);}
+  if(V.on){vState('armed');vStat('Say "wake up".','armed');setTimeout(()=>{if(V.on&&V.rec){try{V.rec.start();}catch(e){}}},300);}
   else{vState('idle');vStat('','');}
 }
 function startVoice(){
   if(V.on)return;
-  if(!SR_IMPL){toast('Voice needs Chrome or Edge, Sir.','err');return;}
+  if(!SR_IMPL){toast('Voice needs Chrome or Edge.','err');return;}
   V.on=true;LS.raw('jarvis_voice','1');
   try{
     V.rec=new SR_IMPL();V.rec.continuous=true;V.rec.interimResults=true;V.rec.lang='en-US';
@@ -1723,11 +1736,11 @@ function startVoice(){
         if(e.results[i].isFinal){V.lastFinal=i+1;handleFinal(e.results[i][0].transcript.trim());}
       }
     };
-    V.rec.onerror=er=>{if(er.error==='not-allowed'){toast('Mic permission denied, Sir.','err');stopVoice();}};
+    V.rec.onerror=er=>{if(er.error==='not-allowed'){toast('Mic permission denied.','err');stopVoice();}};
     V.rec.onend=()=>{if(V.on&&!V.speaking&&!V.listening){try{V.rec.start();}catch(e){}}};
     V.rec.start();
-  }catch(e){V.on=false;toast("Couldn't start voice, Sir.","err");}
-  vState('armed');vStat('Say "wake up", Sir.','armed');
+  }catch(e){V.on=false;toast("Couldn't start voice.","err");}
+  vState('armed');vStat('Say "wake up".','armed');
 }
 function stopVoice(){
   V.on=false;LS.raw('jarvis_voice','0');
@@ -1764,12 +1777,12 @@ function handleFinal(t){
 async function sendVoice(text){
   try{
     const url=getUrl();
-    if(!url){appendMsg('bot','⚠️ No backend configured, Sir. Go to Settings and enter your Render URL.');resumeWake();return;}
+    if(!url){appendMsg('bot','⚠️ No backend configured. Go to Settings and enter your Render URL.');resumeWake();return;}
     const lower=text.toLowerCase();
     if(/^research\b/.test(lower)){
       const r=await fetch(url+'/api/research',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:text.replace(/^research\s+/i,'')})});
       const d=await r.json();
-      const ans=d.answer||'No answer, Sir.';
+      const ans=d.answer||'No answer.';
       showChatThread();appendMsg('user',text);appendMsg('bot',ans);
       if(!V.silent)speakNow(ans);else resumeWake();
       return;
@@ -1777,7 +1790,7 @@ async function sendVoice(text){
     if(/\b(morning\s+)?(digest|briefing)\b/i.test(lower)){
       const r=await fetch(url+'/api/digest');
       const d=await r.json();
-      const ans=d.briefing||'No briefing, Sir.';
+      const ans=d.briefing||'No briefing.';
       showChatThread();appendMsg('user',text);appendMsg('bot',ans);
       if(!V.silent)speakNow(ans);else resumeWake();
       return;
@@ -1785,7 +1798,7 @@ async function sendVoice(text){
     const reply=await send(text);
     if(reply&&!V.silent)speakNow(reply);
     else resumeWake();
-  }catch(e){appendMsg('bot','Voice error, Sir.');resumeWake();}
+  }catch(e){appendMsg('bot','Voice error.');resumeWake();}
 }
 function toggleSilent(){
   V.silent=!V.silent;LS.raw('jarvis_silent',V.silent?'1':'0');
