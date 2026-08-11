@@ -20,7 +20,7 @@ Double-click run_agent.bat (or `python jarvis_agent.py`). You'll be asked for:
 It saves those to agent_config.json (gitignored). Env vars JARVIS_BACKEND /
 JARVIS_SECRET / JARVIS_WORKSPACE override the file.
 """
-import os, sys, json, time, re, threading, subprocess, shutil, ctypes, platform, datetime
+import os, sys, json, time, re, threading, subprocess, shutil, ctypes, platform, datetime, webbrowser
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -38,9 +38,11 @@ workspace = WORKSPACE_DEFAULT
 SYSTEM_DIRS = ("C:\\Windows", "C:\\Program Files", "C:\\Program Files (x86)", "C:\\ProgramData")
 
 # ── LOGGING ─────────────────────────────────────────────────────────────
+LOG_RING = __import__("collections").deque(maxlen=120)   # last N lines for the companion UI
 def log(msg):
     line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] {msg}"
     print(line)
+    LOG_RING.append(line)
     try:
         with open(LOG_FILE, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -352,6 +354,172 @@ def act_wait(step):
     time.sleep(max(0, int(step.get("ms") or 500)) / 1000.0)
     return ok("Waited.")
 
+# ── MEDIA / DISPLAY (volume, brightness, media keys — zero extra deps) ─
+# Media/volume keys are OS virtual-key codes sent with SendInput-style
+# keybd_event; they work system-wide no matter which app is focused.
+_VK = {"vol_up": 0xAF, "vol_down": 0xAE, "mute": 0xAD,
+       "play_pause": 0xB3, "next": 0xB0, "prev": 0xB1, "stop": 0xB2}
+
+def _press_vk(vk):
+    """Press + release one virtual-key code."""
+    u = ctypes.windll.user32
+    u.keybd_event(vk, 0, 0, 0)                 # down
+    u.keybd_event(vk, 0, 2, 0)                 # up (KEYEVENTF_KEYUP)
+    time.sleep(0.05)
+
+def _set_volume_level(level):
+    """Precise volume via pycaw if available; else step the OS volume keys."""
+    try:
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
+        dev = AudioUtilities.GetSpeakers()
+        itf = dev.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
+        from ctypes import cast, POINTER
+        vol = cast(itf, POINTER(IAudioEndpointVolume))
+        vol.SetMasterVolumeLevelScalar(max(0.0, min(1.0, int(level) / 100.0)), None)
+        return True, f"volume set to {level}%"
+    except Exception:
+        # Fallback: nudge with volume keys (coarse but dependency-free).
+        steps = max(1, min(40, abs(int(level) - 50) // 5))
+        key = "vol_up" if int(level) >= 50 else "vol_down"
+        for _ in range(steps):
+            _press_vk(_VK[key])
+        return True, f"nudged volume {'up' if int(level) >= 50 else 'down'} {steps} step(s)"
+
+def act_volume(step):
+    if "level" in step:
+        try:
+            done, msg = _set_volume_level(int(step.get("level")))
+            return ok(msg) if done else err(msg)
+        except Exception as e:
+            return err(str(e)[:300])
+    if step.get("dir") == "up":
+        _press_vk(_VK["vol_up"]); return ok("Volume up.")
+    if step.get("dir") == "down":
+        _press_vk(_VK["vol_down"]); return ok("Volume down.")
+    return err("Volume needs a level (0-100) or a direction.")
+
+def act_mute(step):
+    _press_vk(_VK["mute"]); return ok("Toggled mute.")
+
+def act_media(step):
+    cmd = (step.get("command") or "play_pause").lower()
+    if cmd not in _VK:
+        return err(f"Unknown media command: {cmd}")
+    _press_vk(_VK[cmd]); return ok(f"Sent {cmd}.")
+
+def act_brightness(step):
+    level = (step.get("level") or "").strip()
+    if not level:
+        cur = run_ps("(Get-WmiObject -Namespace root\\wmi -Class WmiMonitorBrightness).CurrentBrightness")
+        return cur if cur.get("ok") else ok("Brightness: unknown (no WMI monitor)")
+    try:
+        lvl = max(0, min(100, int(level)))
+    except Exception:
+        return err("Brightness level must be 0-100.")
+    return run_ps(f"(Get-WmiObject -Namespace root\\wmi -Class WmiMonitorBrightnessMethods)."
+                  f"WmiSetBrightness(1,{lvl})", timeout=30)
+
+# ── ANDROID PHONE (adb / scrcpy — optional, graceful if missing) ──────
+def _adb():
+    p = shutil.which("adb")
+    if p:
+        return p
+    # scrcpy ships a bundled adb.exe — use it if present.
+    sp = shutil.which("scrcpy")
+    if sp:
+        cand = os.path.join(os.path.dirname(sp), "adb.exe")
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+def _adb_shell(args, timeout=30):
+    adb = _adb()
+    if not adb:
+        return None, "Android tools not found — install platform-tools (or scrcpy) and add adb to PATH."
+    try:
+        p = subprocess.run([adb] + args, capture_output=True, text=True, timeout=timeout)
+        out = ((p.stdout or "") + ("\n" + p.stderr if p.stderr else "")).strip()
+        return (out or "Done.") + (f"  (exit {p.returncode})" if p.returncode else ""), None
+    except subprocess.TimeoutExpired:
+        return None, f"adb timed out after {timeout}s"
+    except Exception as e:
+        return None, str(e)[:300]
+
+def act_phone_list(step):
+    out, e = _adb_shell(["devices"])
+    if e: return err(e)
+    return ok(out)
+
+def act_phone_screenshot(step):
+    adb = _adb()
+    if not adb:
+        return err("Android tools not found — install platform-tools (or scrcpy) and add adb to PATH.")
+    try:
+        p = subprocess.run([adb, "exec-out", "screencap", "-p"],
+                           capture_output=True, timeout=30)
+        if p.returncode != 0 or not p.stdout:
+            return err(("adb screencap failed: " + p.stderr.decode(errors="replace"))[:300])
+        shots = os.path.join(workspace, "_screenshots"); os.makedirs(shots, exist_ok=True)
+        name = "phone_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png"
+        path = os.path.join(shots, name)
+        with open(path, "wb") as f:
+            f.write(p.stdout)
+        url = f"http://localhost:{FILE_SERVER_PORT}/screens/{name}"
+        return ok(f"Phone screenshot saved ({os.path.getsize(path):,} B). View: {url}")
+    except Exception as e:
+        return err(str(e)[:300])
+
+def act_phone_open(step):
+    pkg = (step.get("package") or "").strip()
+    if not pkg:
+        return err("No Android package name given, Sir.")
+    out, e = _adb_shell(["shell", "monkey", "-p", pkg, "1"])
+    if e: return err(e)
+    return ok(out)
+
+def act_phone_shell(step):
+    cmd = (step.get("command") or "").strip()
+    if not cmd:
+        return err("No adb shell command, Sir.")
+    out, e = _adb_shell(["shell", cmd])
+    if e: return err(e)
+    return ok(out)
+
+def act_phone_mirror(step):
+    sp = shutil.which("scrcpy")
+    if not sp:
+        return err("scrcpy not installed — `winget install scrcpy` or download from scrcpy.dev.")
+    try:
+        subprocess.Popen([sp], creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS)
+        return ok("Launched scrcpy mirror of your phone.")
+    except Exception as e:
+        return err(str(e)[:300])
+
+# ── IPHONE (tidevice — optional. On Windows: detection + screenshots +
+# app launch. Full tap/type would need WebDriverAgent, which is fragile.) ─
+def _tidevice():
+    return shutil.which("tidevice")
+
+def act_iphone_info(step):
+    if not _tidevice():
+        return err("tidevice not installed — `pip install tidevice` (needs an iPhone on USB + trust prompt).")
+    return run_shell("tidevice info", timeout=30)
+
+def act_iphone_screenshot(step):
+    if not _tidevice():
+        return err("tidevice not installed — `pip install tidevice` (needs an iPhone on USB + trust prompt).")
+    shots = os.path.join(workspace, "_screenshots"); os.makedirs(shots, exist_ok=True)
+    name = "iphone_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png"
+    path = os.path.join(shots, name)
+    r = run_shell(f"tidevice screenshot \"{path}\"", timeout=60)
+    if not r.get("ok"):
+        return r
+    if not os.path.isfile(path):
+        return err("tidevice ran but no screenshot file appeared.")
+    url = f"http://localhost:{FILE_SERVER_PORT}/screens/{name}"
+    return ok(f"iPhone screenshot saved ({os.path.getsize(path):,} B). View: {url}")
+
 # ── VISION: webcam frame → backend Groq vision analysis ───────────────
 # Set by main() once config is loaded (backend URL + API secret).
 _VISION_BACKEND = ""
@@ -621,6 +789,13 @@ ACTIONS = {
     "shutdown": act_shutdown, "restart": act_restart,
     "send_keys": act_send_keys, "print_document": act_print, "wait": act_wait,
     "capture_webcam": act_capture_webcam, "mimo_say": act_mimo_say,
+    # Media / display / phone / LAN (companion app device control)
+    "volume": act_volume, "mute": act_mute, "media": act_media,
+    "brightness": act_brightness,
+    "phone_list": act_phone_list, "phone_screenshot": act_phone_screenshot,
+    "phone_open": act_phone_open, "phone_shell": act_phone_shell,
+    "phone_mirror": act_phone_mirror,
+    "iphone_info": act_iphone_info, "iphone_screenshot": act_iphone_screenshot,
 }
 
 # Jarvis Buddy (robot/) — merge the Arduino bridge actions.
@@ -648,8 +823,85 @@ def run_task(task):
             break
     return log_steps
 
-# ── LOCAL FILE SERVER (Coding page file browser + screenshots) ─────────
-# Read-only, bound to 127.0.0.1 only, restricted to the workspace.
+# ── COMPANION SERVER STATE (set by main()) ─────────────────────────────
+_BACKEND = ""
+_SECRET  = ""
+_WORKSPACE = ""
+_LAST_POLL_OK = False
+_LAST_POLL_TS = 0.0
+_DEVICE_CACHE = {"ts": 0.0, "data": None}
+_ACT_WHITELIST = {"volume", "mute", "media", "brightness", "phone_list",
+                  "phone_screenshot", "phone_mirror", "iphone_info",
+                  "iphone_screenshot", "screenshot", "network_scan", "mimo_say"}
+
+def _device_probe():
+    """Cached (10s) snapshot of connected devices for the companion window."""
+    now = time.time()
+    if _DEVICE_CACHE["data"] and now - _DEVICE_CACHE["ts"] < 10:
+        return _DEVICE_CACHE["data"]
+    out = {"phone": None, "iphone": None, "mimo": None, "lan": None}
+    # Android
+    try:
+        adb = _adb()
+        if adb:
+            p = subprocess.run([adb, "devices"], capture_output=True, text=True, timeout=8)
+            lines = [l.split("\t") for l in (p.stdout or "").strip().splitlines()[1:]
+                     if l.strip() and "device" in l]
+            out["phone"] = [l[0] for l in lines if len(l) >= 2 and l[1].startswith("device")]
+    except Exception:
+        pass
+    # iPhone (tidevice)
+    try:
+        if _tidevice():
+            p = subprocess.run([_tidevice(), "list"], capture_output=True, text=True, timeout=10)
+            txt = (p.stdout or "") + (p.stderr or "")
+            if txt.strip() and "no" not in txt.lower()[:40]:
+                out["iphone"] = txt.strip().splitlines()[0][:120]
+    except Exception:
+        pass
+    # MIMO robot
+    try:
+        fn = ACTIONS.get("robot_status")
+        if fn:
+            r = fn({})
+            out["mimo"] = "ok" if r.get("ok") else "off"
+    except Exception:
+        out["mimo"] = "off"
+    # LAN devices (arp table, unique IPs)
+    try:
+        p = subprocess.run("arp -a", shell=True, capture_output=True, text=True, timeout=10)
+        ips = set(re.findall(r"\d+\.\d+\.\d+\.\d+", p.stdout or "")) - {"255.255.255.255"}
+        out["lan"] = len(ips)
+    except Exception:
+        pass
+    _DEVICE_CACHE.update({"ts": now, "data": out})
+    return out
+
+def _proxy_backend(path, method="GET", data=None):
+    """Forward a call to the backend using the agent's stored secret. The
+    companion page calls localhost, never sees the API secret. Only /api/* paths."""
+    if not path.startswith("/api/"):
+        return {"error": "proxy only forwards /api/*"}, 400
+    try:
+        headers = {"Content-Type": "application/json",
+                   "X-Jarvis-Token": _SECRET,
+                   "X-Jarvis-Workspace": _WORKSPACE}
+        url = _BACKEND + path
+        if method == "POST":
+            r = requests.post(url, json=data or {}, headers=headers, timeout=25)
+        else:
+            r = requests.get(url, headers=headers, timeout=25)
+        try:
+            return r.json(), r.status_code
+        except Exception:
+            return {"raw": r.text[:2000]}, r.status_code
+    except requests.RequestException as e:
+        return {"error": f"backend unreachable: {e}"}, 502
+
+# ── LOCAL FILE SERVER (Coding page file browser + companion window) ────
+# Bound to 127.0.0.1 only. Serves the workspace file browser (read-only,
+# restricted to the workspace), screenshots, the companion.html window, and
+# local JSON endpoints (/api/status, /api/devices, /api/act, /api/backend).
 class FileHandler(BaseHTTPRequestHandler):
     def _send(self, code, body, ctype="application/json; charset=utf-8"):
         self.send_response(code)
@@ -658,13 +910,6 @@ class FileHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
-
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "*")
-        self.end_headers()
 
     def do_GET(self):
         u = urlparse(self.path)
@@ -705,19 +950,165 @@ class FileHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._send(404, b"not found")
             return
+        # ── Companion window ──
+        if u.path == "/" or u.path == "/companion":
+            path = os.path.join(BASE, "companion.html")
+            if not os.path.isfile(path):
+                self._send(404, b'{"error":"companion.html not built yet"}'); return
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    html = f.read()
+                self._send(200, html.encode("utf-8"), ctype="text/html; charset=utf-8")
+            except Exception as e:
+                self._send(400, json.dumps({"error": str(e)[:200]}).encode())
+            return
+        if u.path == "/api/status":
+            self._send(200, json.dumps({
+                "backend": _BACKEND, "workspace": os.path.abspath(workspace),
+                "last_poll_ok": _LAST_POLL_OK, "last_poll_ts": _LAST_POLL_TS,
+                "log_tail": list(LOG_RING)[-40:],
+            }).encode())
+            return
+        if u.path == "/api/devices":
+            try:
+                self._send(200, json.dumps(_device_probe()).encode())
+            except Exception as e:
+                self._send(500, json.dumps({"error": str(e)[:200]}).encode())
+            return
         self._send(404, b'{"error":"not found"}')
+
+    def do_POST(self):
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n).decode("utf-8")) if n else {}
+        except Exception:
+            body = {}
+        u = urlparse(self.path)
+        # Immediate safe device actions (volume, media, phone screenshots...)
+        if u.path == "/api/act":
+            act = (body or {}).get("action", "")
+            if act not in _ACT_WHITELIST and not act.startswith("robot_"):
+                self._send(403, json.dumps({"error": f"action '{act}' not allowed locally"}).encode())
+                return
+            fn = ACTIONS.get(act)
+            if not fn:
+                self._send(404, json.dumps({"error": "unknown action"}).encode()); return
+            try:
+                res = fn(body)
+            except Exception as e:
+                res = {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            self._send(200, json.dumps(res).encode())
+            return
+        # Proxy to the backend using the stored secret (companion page never
+        # holds the API secret itself).
+        if u.path == "/api/backend":
+            path = (body or {}).get("path") or ""
+            method = ((body or {}).get("method") or "GET").upper()
+            payload = (body or {}).get("data")
+            res, code = _proxy_backend(path, method, payload)
+            self._send(code, json.dumps(res).encode())
+            return
+        self._send(404, b'{"error":"not found"}')
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.end_headers()
 
     def log_message(self, *a):
         pass
 
+# ── TRAY ICON (optional: pystray + Pillow) ─────────────────────────────
+_QUIT = threading.Event()
+_PAUSED = False
+_PAUSE_LOCK = threading.Lock()
+
+def _open_companion(icon=None, item=None):
+    def _wv():
+        try:
+            import webview  # optional nicety — a small real window
+            webview.create_window("Jarvis Companion",
+                                  f"http://localhost:{FILE_SERVER_PORT}/companion",
+                                  width=880, height=720, background_color="#0a0d13")
+            webview.start()
+            return
+        except Exception:
+            pass
+        webbrowser.open(f"http://localhost:{FILE_SERVER_PORT}/companion")
+    threading.Thread(target=_wv, daemon=True).start()
+
+def _approve_all(icon=None, item=None):
+    def _work():
+        try:
+            headers = {"Content-Type": "application/json", "X-Jarvis-Token": _SECRET}
+            r = requests.get(_BACKEND + "/api/desktop/approvals", headers=headers, timeout=20)
+            pending = (r.json() or {}).get("pending", [])
+            if not pending:
+                log("Tray: no pending approvals.")
+                return
+            for t in pending:
+                requests.post(_BACKEND + "/api/desktop/approval", headers=headers,
+                              json={"task_id": t["id"], "action": "approve"}, timeout=20)
+            log(f"Tray: approved {len(pending)} pending task(s).")
+        except Exception as e:
+            log(f"tray approve-all error: {e}")
+    threading.Thread(target=_work, daemon=True).start()
+
+def _toggle_pause(icon=None, item=None):
+    global _PAUSED
+    with _PAUSE_LOCK:
+        _PAUSED = not _PAUSED
+    log("Agent " + ("PAUSED" if _PAUSED else "resumed") + " (tray).")
+
+def _tray_title(icon):
+    while icon and not _QUIT.is_set():
+        try:
+            icon.title = ("Jarvis Companion — " +
+                          ("agent online" if _LAST_POLL_OK else "agent offline") +
+                          (" · PAUSED" if _PAUSED else ""))
+        except Exception:
+            pass
+        _QUIT.wait(5)
+
+def _start_tray():
+    try:
+        import pystray
+        from PIL import Image, ImageDraw
+    except Exception:
+        log("Tray icon skipped (pip install pystray Pillow to enable).")
+        return
+    def _icon_image():
+        img = Image.new("RGB", (64, 64), (10, 13, 19))
+        d = ImageDraw.Draw(img)
+        d.ellipse([12, 12, 52, 52], fill=(59, 130, 246))
+        d.ellipse([26, 20, 38, 32], fill=(255, 255, 255))
+        d.arc([20, 30, 46, 50], 20, 160, fill=(255, 255, 255), width=5)
+        return img
+    menu = pystray.Menu(
+        pystray.MenuItem("Open Companion", _open_companion),
+        pystray.MenuItem("Approve all pending", _approve_all),
+        pystray.MenuItem("Pause / Resume", _toggle_pause),
+        pystray.Menu.SEPARATOR,
+        pystray.MenuItem("Quit", lambda i, it: _QUIT.set()),
+    )
+    try:
+        icon = pystray.Icon("jarvis", _icon_image(), "Jarvis Companion", menu)
+        threading.Thread(target=_tray_title, args=(icon,), daemon=True).start()
+        icon.run()
+    except Exception as e:
+        log(f"tray icon failed ({e}).")
+
 # ── MAIN LOOP ───────────────────────────────────────────────────────────
 def main():
-    global workspace
+    global workspace, _BACKEND, _SECRET, _WORKSPACE, _LAST_POLL_OK, _LAST_POLL_TS
     cfg = load_config()
     backend, secret, workspace = cfg["backend"], cfg["secret"], cfg["workspace"]
     os.makedirs(workspace, exist_ok=True)
     global _VISION_BACKEND, _VISION_SECRET
     _VISION_BACKEND, _VISION_SECRET = backend, secret
+    _BACKEND, _SECRET, _WORKSPACE = backend, secret, os.path.abspath(workspace)
 
     # Jarvis Buddy — use a saved COM port if configured, else auto-detect on first command.
     try:
@@ -737,6 +1128,10 @@ def main():
     except Exception as e:
         log(f"file server off ({e}) — Coding page file browser won't work")
 
+    # Companion tray icon (Open Companion → localhost window). Optional.
+    threading.Thread(target=_start_tray, daemon=True).start()
+    log("Tray icon starting (pystray + Pillow).")
+
     # MIMO's eyes — continuous webcam + head-pose gaze, feeds the backend.
     threading.Thread(target=mimo_vision_loop, daemon=True).start()
     log("MIMO vision loop started (webcam + head-pose gaze)")
@@ -751,15 +1146,21 @@ def main():
     log(f"Workspace: {workspace}   (file browser: http://localhost:{FILE_SERVER_PORT})")
     log("Waiting for tasks from Jarvis, Sir...")
     auth_warned = False
-    while True:
+    while not _QUIT.is_set():
+        if _PAUSED:
+            time.sleep(2)
+            continue
         try:
             r = requests.get(f"{backend}/api/desktop/poll", headers=headers, timeout=35)  # 35s to survive Render free-tier cold starts
+            _LAST_POLL_TS = time.time()
             if r.status_code != 200:
+                _LAST_POLL_OK = False
                 if not auth_warned:
                     log(f"Backend responded {r.status_code} — check the URL and API Secret, Sir. ({str(r.text)[:120]})")
                     auth_warned = True
                 time.sleep(5)
                 continue
+            _LAST_POLL_OK = True
             auth_warned = False
             task = r.json().get("task")
             if task:

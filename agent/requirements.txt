@@ -3,3 +3,8 @@ Pillow>=10.0
 pyserial>=3.5
 opencv-python-headless>=4.8
 mediapipe>=0.10.14
+pystray>=0.19
+# optional (companion device control):
+# pycaw        precise volume levels on Windows
+# tidevice     iPhone detection + screenshots
+# Android:     install platform-tools / scrcpy and add adb to PATH

@@ -850,6 +850,10 @@ DESKTOP_SAFE_ACTIONS = {
     "open_app", "list_files", "read_file", "find_file", "get_system_info",
     "get_network_info", "network_scan", "screenshot", "capture_webcam", "list_windows",
     "list_printers", "list_usb", "list_displays", "get_clipboard",
+    # Media / display / phone (companion app device control — non-destructive).
+    "volume", "mute", "brightness", "media",
+    "phone_list", "phone_screenshot", "phone_open", "phone_mirror",
+    "iphone_info", "iphone_screenshot",
     # Jarvis Buddy (robot/) — servos/OLED/buzzer are physical but harmless.
     "robot_head", "robot_eyes", "robot_blink", "robot_blip", "robot_say", "robot_status",
     # MIMO — proactive speech: desktop says a line + popup; harmless.
@@ -858,7 +862,7 @@ DESKTOP_SAFE_ACTIONS = {
 DESKTOP_APPROVE_ACTIONS = {
     "set_clipboard", "write_file", "edit_file", "delete_file", "delete_folder",
     "execute_code", "install_software", "shutdown", "restart", "send_keys",
-    "print_document",
+    "print_document", "phone_shell",
 }
 # Read-only / dev commands the agent may run without approval (code runs in
 # the workspace cwd, which is the sandbox). Everything else needs a Yes.
@@ -967,6 +971,18 @@ DESKTOP_ACTIONS = """Return a JSON object with a "steps" array (1-8 steps) of ac
 - {"action":"execute_code","language":"python","code":"print('hi')"} — run code
 - {"action":"install_software","name":"7zip"} / {"action":"shutdown"} / {"action":"restart"}
 - {"action":"send_keys","keys":"Ctrl+S"} / {"action":"print_document","path":"..."}
+Media & display:
+- {"action":"volume","level":50} — set master volume 0-100, or {"action":"volume","dir":"up"/"down"}
+- {"action":"mute"} / {"action":"brightness","level":60}
+- {"action":"media","command":"play_pause"|"next"|"prev"|"stop"} — control whatever media is playing
+Android phone (USB debugging on; agent needs adb/scrcpy):
+- {"action":"phone_list"} — connected devices
+- {"action":"phone_screenshot"} — capture the phone screen (returns a viewable link)
+- {"action":"phone_open","package":"com.spotify.music"} — launch an app
+- {"action":"phone_mirror"} — open scrcpy to see/drive the phone live
+- {"action":"phone_shell","command":"input swipe 500 1000 500 200"} — raw adb shell (needs approval)
+iPhone (agent needs tidevice; detection + screenshots + info only on Windows):
+- {"action":"iphone_info"} / {"action":"iphone_screenshot"}
 Mohamed's coding workspace is at the path the agent reports. Use it for scripts and projects. Prefer read-only/info actions for questions."""
 
 CODE_ACTIONS = """You are Jarvis completing a coding task for Mohamed inside his workspace folder. Return JSON:
@@ -1218,7 +1234,15 @@ DESKTOP_RE = re.compile(
     r"create (a |the )?(file|folder)|write (a |the )?file|clipboard|install (a |the )?(app|program)|"
     r"shutdown|restart (the )?pc|print (a |this )?file|what's on (my |the )?(desktop|screen)|"
     r"(look|see) (at |into |in )?(the )?(webcam|camera)|look at me|what do (you|u) see|"
-    r"(are you|r u) (looking|watching)|can you (see|look at) me)\b", re.I)
+    r"(are you|r u) (looking|watching)|can you (see|look at) me|"
+    # Media / display / phone / LAN (companion app device control)
+    r"turn (the |)(volume|music) (up|down)|turn (up|down) (the |)volume|volume (up|down|mute)|"
+    r"(set|change|lower|raise|increase|decrease) (the |)(volume|brightness)|"
+    r"(play|pause|resume) (the |)(music|song)|play (some |the |)music|"
+    r"(skip|next|previous) (this |the |)(song|track)|next (song|track)|pause (the |)music|"
+    r"(screenshot|mirror) (my |the |this )?(phone|iphone)|(my |the )?(phone|iphone) (screen|screenshot)|"
+    r"(scan|list|find) (my |the |this )?(network|wifi|wi-fi|devices)|what'?s? on (my |the )?network|"
+    r"(mirror|drive) (my |the )?phone)\b", re.I)
 
 # Coding intent — "write/build/make/fix" code in the workspace.
 CODE_RE = re.compile(
