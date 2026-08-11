@@ -205,6 +205,32 @@ async function execStep(step) {
         return { ok: !!hit, done: hit ? 'clicked' : 'selector not found' };
       }
 
+      case 'select_option': {
+        // Pick an option from a <select> dropdown. `selector` is optional —
+        // without it, find any dropdown whose options include the value.
+        const fn = new Function('selOrLabel', 'val', `
+          let el = null;
+          if (selOrLabel) el = document.querySelector(selOrLabel);
+          if (!el || el.tagName !== 'SELECT') {
+            const selects = [...document.querySelectorAll('select')];
+            el = selects.find(s => [...s.options].some(o => o.text?.trim().toLowerCase().includes(String(val).toLowerCase()))) || null;
+          }
+          if (!el) return false;
+          const opts = [...el.options];
+          const opt = opts.find(o => o.text?.trim().toLowerCase() === String(val).toLowerCase())
+                   || opts.find(o => o.text?.trim().toLowerCase().includes(String(val).toLowerCase()))
+                   || opts.find(o => o.value === String(val));
+          if (!opt) return false;
+          el.value = opt.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        `);
+        const f = await execAllFrames(tab.id, fn, [step.selector || null, step.value]);
+        const hit = f.find(r => r.result === true);
+        return { ok: !!hit, done: hit ? 'selected "' + step.value + '"' : 'option "' + step.value + '" not found' };
+      }
+
       case 'type_selector': {
         const fn = new Function('sel', 'val', TYPE_INTO_FN + `
           const el = document.querySelector(sel);

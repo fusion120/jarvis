@@ -491,7 +491,7 @@ def outlook_loop():
 # in Chrome, then posts results back. Tasks can be explicit step lists or
 # natural-language commands (AI plans steps, then re-plans until done).
 KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
-                 "click_text","click_selector","type_selector","type_label","type",
+                 "click_text","click_selector","type_selector","type_label","type","select_option",
                  "search","run_js","scroll","wait","press_key",
                  "list_tabs","read_tab","switch_tab","close_tab",
                  "go_back","go_forward","new_window","group_tabs",
@@ -576,6 +576,7 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 - {"action":"click_text","text":"visible button/link text"}
 - {"action":"click_selector","selector":"css selector"}
 - {"action":"type_selector","selector":"css selector","value":"text"}
+- {"action":"select_option","value":"option text","selector":"optional css selector"} — pick an option from a <select> dropdown (filters, quiz matching/fill-in questions). Selector optional: without it, finds any dropdown containing the option text.
 - {"action":"type_label","label":"input label or placeholder","value":"text"}
 - {"action":"type","value":"text"} — type into the field that is CURRENTLY FOCUSED (regular inputs, textareas, and contenteditable editors like Gmail/X)
 - {"action":"search","query":"text to search the site's own search box"}
@@ -811,7 +812,7 @@ def enqueue_browser(command, steps, chain=None):
 # re-clicking the same result, code re-running the same failing file write).
 # Pure read-only rechecks (lone read_page/wait) are not counted as loops.
 _MUTATING = {"new_tab","navigate","click_text","click_selector","search",
-             "type_selector","type_label","type","write_file","edit_file","run_command",
+             "type_selector","type_label","type","select_option","write_file","edit_file","run_command",
              "execute_code","press_key","run_js"}
 
 def _batch_sig(steps):
