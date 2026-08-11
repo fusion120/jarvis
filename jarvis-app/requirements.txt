@@ -1,0 +1,4 @@
+# Jarvis — one-window desktop app
+# Dev run:  python jarvis-app/main.py     (needs the agent deps too: agent/requirements.txt)
+pywebview>=5
+pyinstaller>=6   # build dependency (build_app.bat)

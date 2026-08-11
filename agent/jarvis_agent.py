@@ -27,11 +27,28 @@ from urllib.parse import urlparse, parse_qs
 
 import robot_bridge   # Jarvis Buddy — USB serial driver for the Arduino (robot/)
 
-BASE          = os.path.dirname(os.path.abspath(__file__))
+# Frozen (PyInstaller one-folder) → BASE is the folder holding the .exe so
+# agent_config.json / logs / companion.html persist next to the binary.
+def _app_base():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+BASE          = _app_base()
 CONFIG_FILE   = os.path.join(BASE, "agent_config.json")
 LOG_FILE      = os.path.join(BASE, "agent.log")
 WORKSPACE_DEFAULT = os.path.join(os.path.expanduser("~"), "jarvis-workspace")
 FILE_SERVER_PORT = 8765
+
+# The unified Jarvis window (jarvis-app/app.html). Source runs live from the
+# repo; the packaged build ships a copy next to agent.exe.
+_APP_HTML_CANDIDATES = [
+    os.path.normpath(os.path.join(os.path.dirname(BASE), "app.html")),            # packaged: dist/Jarvis/app.html
+    os.path.normpath(os.path.join(BASE, "..", "jarvis-app", "app.html")),         # source: repo/jarvis-app/app.html
+]
+def _extension_path():
+    """Folder the Chrome extension lives in — copied next to the app at build."""
+    p = os.path.normpath(os.path.join(BASE, "..", "extension"))
+    return p if os.path.isdir(p) else ""
 
 workspace = WORKSPACE_DEFAULT
 
@@ -961,11 +978,16 @@ class FileHandler(BaseHTTPRequestHandler):
             except Exception:
                 self._send(404, b"not found")
             return
-        # ── Companion window ──
-        if u.path == "/" or u.path == "/companion":
-            path = os.path.join(BASE, "companion.html")
+        # ── Companion window / unified Jarvis app ──
+        if u.path == "/" or u.path == "/companion" or u.path == "/app":
+            if u.path == "/app":
+                path = next((c for c in _APP_HTML_CANDIDATES if os.path.isfile(c)), "")
+                if not path:
+                    self._send(404, b'{"error":"app.html not found"}'); return
+            else:
+                path = os.path.join(BASE, "companion.html")
             if not os.path.isfile(path):
-                self._send(404, b'{"error":"companion.html not built yet"}'); return
+                self._send(404, b'{"error":"html not found"}'); return
             try:
                 with open(path, "r", encoding="utf-8") as f:
                     html = f.read()
@@ -978,6 +1000,7 @@ class FileHandler(BaseHTTPRequestHandler):
                 "backend": _BACKEND, "workspace": os.path.abspath(workspace),
                 "last_poll_ok": _LAST_POLL_OK, "last_poll_ts": _LAST_POLL_TS,
                 "log_tail": list(LOG_RING)[-40:],
+                "extension_path": _extension_path(),
             }).encode())
             return
         if u.path == "/api/devices":
@@ -1050,6 +1073,21 @@ def _open_companion(icon=None, item=None):
         webbrowser.open(f"http://localhost:{FILE_SERVER_PORT}/companion")
     threading.Thread(target=_wv, daemon=True).start()
 
+def _open_app(icon=None, item=None):
+    """Tray: open the unified Jarvis window (chat + companion in one)."""
+    def _wv():
+        try:
+            import webview
+            webview.create_window("Jarvis",
+                                  f"http://localhost:{FILE_SERVER_PORT}/app",
+                                  width=1100, height=780, background_color="#0a0d13")
+            webview.start()
+            return
+        except Exception:
+            pass
+        webbrowser.open(f"http://localhost:{FILE_SERVER_PORT}/app")
+    threading.Thread(target=_wv, daemon=True).start()
+
 def _approve_all(icon=None, item=None):
     def _work():
         try:
@@ -1098,6 +1136,7 @@ def _start_tray():
         d.arc([20, 30, 46, 50], 20, 160, fill=(255, 255, 255), width=5)
         return img
     menu = pystray.Menu(
+        pystray.MenuItem("Open Jarvis", _open_app),
         pystray.MenuItem("Open Companion", _open_companion),
         pystray.MenuItem("Approve all pending", _approve_all),
         pystray.MenuItem("Pause / Resume", _toggle_pause),
