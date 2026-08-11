@@ -142,6 +142,37 @@ body::before{
 .sdot{width:6px;height:6px;border-radius:50%;background:var(--green);box-shadow:0 0 6px var(--green);animation:pulse 2.5s ease infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
 
+/* ── NEW CHAT + RECENTS ──────────── */
+.sb-newchat{
+  display:flex;align-items:center;gap:9px;justify-content:center;
+  margin:10px 8px 4px;padding:9px 12px;
+  border-radius:var(--r);cursor:pointer;transition:all .18s;
+  border:1px dashed var(--border-md);color:var(--text2);font-size:13px;font-weight:500;
+}
+.sb-newchat:hover{background:var(--accent-dim);color:var(--accent);border-color:rgba(59,130,246,.3)}
+.sb-newchat svg{width:14px;height:14px;opacity:.65}
+.sb-newchat:hover svg{opacity:1}
+.sb-recents{max-height:40%;overflow-y:auto;padding:0 8px}
+.sb-recents::-webkit-scrollbar{width:4px}
+.sb-recents::-webkit-scrollbar-thumb{background:var(--border-md);border-radius:4px}
+.recent-item{
+  display:flex;align-items:center;gap:9px;padding:7px 10px;
+  border-radius:var(--r);cursor:pointer;transition:all .15s;
+  color:var(--text2);font-size:12px;font-weight:500;
+  margin-bottom:1px;position:relative;
+}
+.recent-item svg{width:14px;height:14px;flex-shrink:0;opacity:.5}
+.recent-item:hover{background:var(--surface2);color:var(--text)}
+.recent-item:hover svg{opacity:.8}
+.recent-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.recent-del{
+  display:none;position:absolute;right:6px;top:50%;transform:translateY(-50%);
+  background:none;border:none;color:var(--text3);cursor:pointer;
+  font-size:14px;line-height:1;padding:2px 4px;border-radius:4px;
+}
+.recent-del:hover{color:var(--red);background:rgba(239,68,68,.1)}
+.recent-item:hover .recent-del{display:block}
+
 /* ── MAIN ─────────────────────────── */
 .main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0}
 .topbar{
@@ -468,6 +499,10 @@ body::before{
       <div class="sb-logo"><div class="sb-mark">J</div><div class="sb-name">Jarvis</div></div>
       <div class="sb-tag">your personal Jarvis</div>
     </div>
+    <div class="sb-newchat" onclick="newChat()">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+      New chat
+    </div>
     <nav class="sb-nav">
       <div class="sb-sec">Workspace</div>
       <div class="ni active" onclick="go('chat',this)">
@@ -513,6 +548,10 @@ body::before{
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings
       </div>
     </nav>
+    <div class="sb-recents" id="sb-recents">
+      <div class="sb-sec">Recents</div>
+      <div id="recents-list"></div>
+    </div>
     <div class="sb-foot">
       <div class="status-line"><div class="sdot"></div>llama-3.3-70b · online</div>
     </div>
@@ -539,7 +578,7 @@ body::before{
       <div class="chat-land" id="chat-land">
         <div class="land-time" id="land-time"></div>
         <h1 class="land-h">What should we tackle <em>next?</em></h1>
-        <p class="land-p">Chat · YouTube & article summaries · Assignment help<br>Powered by Groq (llama-3.3-70b) · Your conversations are remembered</p>
+        <p class="land-p">Human-like conversation · Versatile reasoning · Powerful everyday features<br>Upload images, analyze files, voice mode — no technical background needed</p>
         <div class="chips">
           <div class="chip" onclick="fill('Help me write a cold email pitch for a local Houston business website')">✍️ Cold email pitch</div>
           <div class="chip" onclick="fill('Summarize this YouTube video: ')">▶️ YouTube summary</div>
@@ -909,6 +948,7 @@ function initApp(){
   updateLandTime();
   setInterval(updateLandTime,60000);
   loadSettings();
+  renderRecents();
 }
 
 function updateLandTime(){
@@ -1021,12 +1061,77 @@ function mdparse(text){
     .replace(/^(.)/,'<p style="margin-bottom:7px">$1');
 }
 function clearChat(){
+  if(S.history.length)saveToRecents(S.history);
   S.history=[];LS.set('jarvis_chat',[]);
   document.getElementById('msgs').innerHTML='';
   document.getElementById('chat-thread').classList.remove('on');
   document.getElementById('chat-land').style.display='';
   document.getElementById('thread-wrap').style.display='none';
+  renderRecents();
   toast('Chat cleared.');
+}
+
+// ─── RECENTS ──────────────────────────────────
+function getRecents(){return LS.get('jarvis_recents',[]);}
+function saveRecents(arr){LS.set('jarvis_recents',arr.slice(0,20));}
+
+function saveToRecents(history){
+  if(!history||!history.length)return;
+  const firstUser=history.find(m=>m.role==='user'||m.role==='assistant');
+  let title='New conversation';
+  if(firstUser&&firstUser.content){
+    title=firstUser.content.replace(/^[\s\S]{0,60}/,m=>m.replace(/\n/g,' ').trim());
+    if(title.length>40)title=title.slice(0,40)+'…';
+  }
+  const recents=getRecents();
+  recents.unshift({id:Date.now(),title,messages:JSON.parse(JSON.stringify(history))});
+  saveRecents(recents);
+}
+
+function newChat(){
+  if(S.history.length)saveToRecents(S.history);
+  S.history=[];LS.set('jarvis_chat',[]);
+  document.getElementById('msgs').innerHTML='';
+  document.getElementById('chat-thread').classList.remove('on');
+  document.getElementById('chat-land').style.display='';
+  document.getElementById('thread-wrap').style.display='none';
+  renderRecents();
+}
+
+function loadRecent(id){
+  const recents=getRecents();
+  const entry=recents.find(r=>r.id===id);
+  if(!entry)return;
+  S.history=JSON.parse(JSON.stringify(entry.messages));
+  LS.set('jarvis_chat',S.history);
+  document.getElementById('msgs').innerHTML='';
+  document.getElementById('chat-land').style.display='none';
+  document.getElementById('chat-thread').classList.add('on');
+  document.getElementById('thread-wrap').style.display='block';
+  S.history.forEach(m=>appendMsg(m.role==='user'?'user':'bot',m.content,false));
+  setTimeout(()=>{const t=document.getElementById('chat-thread');t.scrollTop=t.scrollHeight;},100);
+}
+
+function deleteRecent(id,ev){
+  ev.stopPropagation();
+  saveRecents(getRecents().filter(r=>r.id!==id));
+  renderRecents();
+}
+
+function renderRecents(){
+  const el=document.getElementById('recents-list');
+  if(!el)return;
+  const recents=getRecents();
+  const wrap=document.getElementById('sb-recents');
+  if(!recents.length){wrap.style.display='none';return;}
+  wrap.style.display='';
+  el.innerHTML=recents.map(r=>
+    `<div class="recent-item" onclick="loadRecent(${r.id})">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span class="recent-title">${esc(r.title)}</span>
+      <button class="recent-del" onclick="deleteRecent(${r.id},event)" title="Remove">×</button>
+    </div>`
+  ).join('');
 }
 
 // ─── SKILLS ───────────────────────────────────
