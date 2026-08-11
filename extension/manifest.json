@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Jarvis Agent",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Jarvis can see and control your browser. Say the word, Sir.",
   "permissions": [
     "activeTab",

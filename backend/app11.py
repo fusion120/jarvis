@@ -586,6 +586,7 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
 There is NO "play" action. To play a video/song: open the site, read_page, then {"action":"click_text","text":"<a video title>"} to start it. For "a random video/song", click the first video/song title you see on the page. For "a video about X", search for X first, then click the top result.
 When the user asks you to TYPE, WRITE, ENTER, or SEND text (a chat message, a comment, a form field, an email draft): actually do it — select the field, then use {"action":"type","value":"..."} if it is already focused, otherwise {"action":"type_label","label":"...","value":"..."} or {"action":"type_selector","selector":"...","value":"..."} to target it. Typing works on inputs, textareas, AND contenteditable editors (Gmail, X/Twitter, Notion-style). To submit, press Enter with {"action":"press_key","key":"Enter"} or click the send button. Do NOT just describe the text or give up — type it for real.
+Login/sign-in forms sometimes render inside embedded iframes (Outlook, Google, Canvas, etc.). type_label, type_selector, click_text, click_selector, type and press_key search every frame automatically, so target those fields exactly as you would top-level ones. read_page reports such forms as "[iframe] <url>: <field names>" — if you see that, the fields ARE there, use type_label/click_text on them.
 For EXPLICIT RESEARCH / SHOPPING tasks — the user asks you to LOOK FOR / SEARCH / FIND / COMPARE a product or place ("look for the best water bottle under $30", "search top-rated laptops", "recommend a good X under $Y", "compare these two models"): do REAL multi-source research. Run the search on 2-3 different sites (Google, plus a review/forum site, plus the official or manufacturer site), read the pages, and compare at least 3-4 specific named models. The final answer must name actual products you saw — model name, approximate price, 1-2 key features each, and the source URL. Never invent product names, prices, or specs; if you only found one solid source, say so and still name what you found. This applies to RESEARCH REQUESTS ONLY — do NOT treat a plain opinion question like "what's the best coffee place in Texas" as a research task; answer that directly from knowledge.
 {"action":"read_page"} returns the page's visible text (up to ~12k chars) AND up to 80 links with their titles — scan those links to choose what to click.
 TO FIND something the user asked for, keep going until you actually see it: search the site, read_page, and scan the links it returns. If the answer is not on the page yet, scroll down ({"action":"scroll","y":800} triggers lazy-loaded content on feeds and infinite-scroll sites), read_page again, and click "Next" / "Load more" / page numbers to move through result pages. You may batch several commands at once: search → wait → read_page → scroll → click. Do NOT give up after one page — work through several pages or refine the search before declaring failure.
@@ -760,12 +761,25 @@ def decide_next(command, log, page):
               "Do NOT declare done while the goal is still unfound: if the page text or links don't contain "
               "the answer yet, keep issuing steps (search, scroll, read_page, click \"Next\"/\"Load more\") "
               "until you actually have it. "
+              "CRITICAL: Do NOT issue new_tab or navigate to a URL that is already open — the current page "
+              "URL is shown above. If a previous step opened a site, continue working on THAT tab (read_page, "
+              "click, type, scroll). Opening the same site again wastes time and creates duplicate tabs. "
+              "If a type/click action failed, try a DIFFERENT selector or approach on the SAME page — do not "
+              "reopen the site. "
               + ACTIONS_DOC)
     links = "\n".join(f"- {l.get('text','')} -> {l.get('href','')}"
                       for l in (page.get('links') or [])[:60])
+    def _fmt_inputs(items, n):
+        return ", ".join(f"{i.get('placeholder') or i.get('name') or i.get('type','')} ({i.get('tag','')})"
+                         for i in (items or [])[:n])
+    inputs = _fmt_inputs(page.get('inputs'), 25)
+    frames = ""
+    for fr in (page.get('frames') or [])[:8]:
+        frames += f"\n[iframe] {str(fr.get('frameUrl',''))[:80]}: {_fmt_inputs(fr.get('inputs'), 15) or 'no inputs'}"
     user = (f"Goal: {command}\n\nSteps so far:\n{json.dumps(log[-14:], indent=1)[:9000]}\n\n"
             f"Current page:\nURL: {page.get('url')}\nTitle: {page.get('title')}\n"
             f"Text: {page.get('text','')[:6000]}\n"
+            f"Form fields on page: {inputs or '(none)'}{frames or ''}\n"
             f"Page links (text -> href):\n{links or '(none captured)'}")
     obj = ask_json(system, user)
     if not obj:

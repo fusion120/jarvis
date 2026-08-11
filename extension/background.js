@@ -47,6 +47,41 @@ const TYPE_INTO_FN = [
   "}"
 ].join('\n');
 
+// ── CROSS-FRAME HELPERS ────────────────────────────────────────────────
+// Some login forms (Outlook, Google auth, etc.) render inside cross-origin
+// iframes — top-frame-only queries find nothing. Run a script in every frame
+// of the tab (top frame + all iframes) and return all frame results so the
+// caller can pick the first hit. Requires only `scripting` + <all_urls>.
+async function execAllFrames(tabId, func, args) {
+  return await chrome.scripting.executeScript({
+    target: { tabId, allFrames: true },
+    func,
+    args
+  }).catch(() => []);
+}
+
+// Shared injected function: find a button/link/role element by visible text.
+const CLICK_TEXT_FN = (text) => {
+  const all = [...document.querySelectorAll('button,a,[role=button],[role=menuitem],input[type=submit],input[type=button]')];
+  const el = all.find(e => e.innerText?.trim().toLowerCase().includes(text.toLowerCase()) || e.value?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('aria-label')?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('title')?.toLowerCase().includes(text.toLowerCase()));
+  if (el) { el.click(); return 'clicked: ' + el.innerText?.trim(); }
+  const any = [...document.querySelectorAll('*')].find(e => e.childElementCount === 0 && e.innerText?.trim().toLowerCase().includes(text.toLowerCase()));
+  if (any) { any.click(); return 'clicked any: ' + any.innerText?.trim(); }
+  return null;
+};
+
+// Shared injected function: find an input by label text / placeholder /
+// aria-label and type into it. Works in any frame's document.
+const TYPE_LABEL_FN = new Function('labelText', 'val', TYPE_INTO_FN + `
+  const labels = [...document.querySelectorAll('label')];
+  const label = labels.find(l => l.innerText?.toLowerCase().includes(labelText.toLowerCase()));
+  let el = label ? document.getElementById(label.htmlFor) || label.querySelector('input,textarea,[contenteditable]') : null;
+  if (!el) el = document.querySelector('input[placeholder*="' + labelText + '" i], textarea[placeholder*="' + labelText + '" i], [contenteditable][placeholder*="' + labelText + '" i]');
+  if (!el) el = document.querySelector('[aria-label*="' + labelText + '" i]');
+  if (!el) return null;
+  return typeInto(el, val) ? true : false;
+`);
+
 // ── TRACK CURRENT TAB ─────────────────────────────────────────────────
 chrome.tabs.onActivated.addListener(async (info) => {
   try {
@@ -114,7 +149,34 @@ async function execStep(step) {
               .slice(0, 80)
           })
         });
-        return { ok: true, data: res.result };
+        const data = res.result || {};
+        // Peek into iframes too — login forms (Outlook, Google, etc.) live in
+        // cross-origin frames the top-frame query can't see. Surface their
+        // inputs so the model knows the fields exist, then type/click handles
+        // them via execAllFrames.
+        try {
+          const frames = await chrome.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: true },
+            func: () => {
+              if (window === window.top) return null;
+              return {
+                frameUrl: location.href.slice(0, 200),
+                inputs: [...document.querySelectorAll('input,textarea,select')]
+                  .map(el => ({ tag: el.tagName, type: el.type, name: el.name, placeholder: el.placeholder, value: el.value }))
+                  .slice(0, 15),
+                text: (document.body?.innerText || '').slice(0, 1200)
+              };
+            }
+          });
+          const fds = (frames || []).map(f => f.result).filter(Boolean);
+          if (fds.length) {
+            data.frames = fds;
+            for (const f of fds) {
+              data.inputs = (data.inputs || []).concat(f.inputs).slice(0, 30);
+            }
+          }
+        } catch {}
+        return { ok: true, data };
       }
 
       case 'screenshot': {
@@ -125,81 +187,64 @@ async function execStep(step) {
       case 'click_text': {
         const [r] = await chrome.scripting.executeScript({
           target: { tabId: tab.id },
-          func: (text) => {
-            const all = [...document.querySelectorAll('button,a,[role=button],[role=menuitem],input[type=submit],input[type=button]')];
-            const el = all.find(e => e.innerText?.trim().toLowerCase().includes(text.toLowerCase()) || e.value?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('aria-label')?.toLowerCase().includes(text.toLowerCase()) || e.getAttribute('title')?.toLowerCase().includes(text.toLowerCase()));
-            if (el) { el.click(); return 'clicked: ' + el.innerText?.trim(); }
-            // fallback: any element
-            const any = [...document.querySelectorAll('*')].find(e => e.childElementCount === 0 && e.innerText?.trim().toLowerCase().includes(text.toLowerCase()));
-            if (any) { any.click(); return 'clicked any: ' + any.innerText?.trim(); }
-            return null;
-          },
+          func: CLICK_TEXT_FN,
           args: [step.text]
         });
-        return r.result ? { ok: true, done: r.result } : { ok: false, error: `"${step.text}" not found` };
+        if (r.result) return { ok: true, done: r.result };
+        // Element may live in an iframe (Outlook / Google auth forms)
+        const f = await execAllFrames(tab.id, CLICK_TEXT_FN, [step.text]);
+        const hit = f.find(r => r.result);
+        if (hit) return { ok: true, done: hit.result + ' (in iframe)' };
+        return { ok: false, error: `"${step.text}" not found` };
       }
 
       case 'click_selector': {
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (sel) => { const el = document.querySelector(sel); if (el) { el.click(); return true; } return false; },
-          args: [step.selector]
-        });
-        return { ok: !!r.result, done: r.result ? 'clicked' : 'selector not found' };
+        const fn = (sel) => { const el = document.querySelector(sel); if (el) { el.click(); return true; } return false; };
+        const f = await execAllFrames(tab.id, fn, [step.selector]);
+        const hit = f.find(r => r.result === true);
+        return { ok: !!hit, done: hit ? 'clicked' : 'selector not found' };
       }
 
       case 'type_selector': {
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: new Function('sel', 'val', TYPE_INTO_FN + `
-            const el = document.querySelector(sel);
-            if (!el) return false;
-            return typeInto(el, val);
-          `),
-          args: [step.selector, step.value]
-        });
-        return { ok: !!r.result, done: r.result ? 'typed' : 'selector not found' };
+        const fn = new Function('sel', 'val', TYPE_INTO_FN + `
+          const el = document.querySelector(sel);
+          if (!el) return false;
+          return typeInto(el, val);
+        `);
+        const f = await execAllFrames(tab.id, fn, [step.selector, step.value]);
+        const hit = f.find(r => r.result === true);
+        return { ok: !!hit, done: hit ? 'typed' : 'selector not found' };
       }
 
       case 'type_label': {
-        // Find an input/textarea/contenteditable by its label text, type
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: new Function('labelText', 'val', TYPE_INTO_FN + `
-            // Try label element
-            const labels = [...document.querySelectorAll('label')];
-            const label = labels.find(l => l.innerText?.toLowerCase().includes(labelText.toLowerCase()));
-            let el = label ? document.getElementById(label.htmlFor) || label.querySelector('input,textarea,[contenteditable]') : null;
-            // Try placeholder
-            if (!el) el = document.querySelector('input[placeholder*="' + labelText + '" i], textarea[placeholder*="' + labelText + '" i], [contenteditable][placeholder*="' + labelText + '" i]');
-            // Try aria-label
-            if (!el) el = document.querySelector('[aria-label*="' + labelText + '" i]');
-            if (!el) return false;
-            return typeInto(el, val);
-          `),
-          args: [step.label, step.value]
-        });
-        return { ok: !!r.result, done: r.result ? 'typed in "' + step.label + '"' : 'label "' + step.label + '" not found' };
+        // Find an input/textarea/contenteditable by its label text, type.
+        // Runs across all frames (top + iframes) so Outlook/Google login
+        // fields inside cross-origin iframes are reachable.
+        const f = await execAllFrames(tab.id, TYPE_LABEL_FN, [step.label, step.value]);
+        const hit = f.find(r => r.result === true);
+        if (hit) return { ok: true, done: 'typed in "' + step.label + '"' };
+        const miss = f.find(r => r.result === false);
+        if (miss) return { ok: false, error: 'found "' + step.label + '" but could not type into it' };
+        return { ok: false, error: 'label "' + step.label + '" not found' };
       }
 
       case 'type': {
-        // Type into whatever field is currently focused on the page.
+        // Type into whatever field is currently focused on the page. Focus
+        // can live inside an iframe, so scan every frame's activeElement.
         if (!step.value) return { ok: false, error: 'no text provided to type' };
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: new Function('value', TYPE_INTO_FN + `
-            const el = document.activeElement;
-            if (!el || el === document.body || el === document.documentElement) return 'none';
-            if (el.tagName === 'INPUT') {
-              const t = (el.type || 'text').toLowerCase();
-              if (['button','submit','reset','checkbox','radio','range','color','file','hidden','image'].includes(t)) return 'not-editable';
-            }
-            if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.isContentEditable) return 'not-editable';
-            return typeInto(el, value) ? 'typed' : 'failed';
-          `),
-          args: [step.value]
-        });
-        const st = r?.result;
+        const fn = new Function('value', TYPE_INTO_FN + `
+          const el = document.activeElement;
+          if (!el || el === document.body || el === document.documentElement) return 'none';
+          if (el.tagName === 'INPUT') {
+            const t = (el.type || 'text').toLowerCase();
+            if (['button','submit','reset','checkbox','radio','range','color','file','hidden','image'].includes(t)) return 'not-editable';
+          }
+          if (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && !el.isContentEditable) return 'not-editable';
+          return typeInto(el, value) ? 'typed' : 'failed';
+        `);
+        const f = await execAllFrames(tab.id, fn, [step.value]);
+        const typed = f.find(r => r.result === 'typed');
+        const st = typed ? 'typed' : (f.find(r => r.result)?.result || 'none');
         if (st === 'typed') return { ok: true, done: 'typed into focused field' };
         if (st === 'none') return { ok: false, error: 'no field is focused — click one first' };
         return { ok: false, error: 'focused element is not a text field' };
@@ -328,16 +373,15 @@ async function execStep(step) {
         return { ok: true, done: `waited ${step.ms || 1000}ms` };
 
       case 'press_key': {
-        const [r] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id },
-          func: (key) => {
-            document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
-            document.activeElement?.dispatchEvent(new KeyboardEvent('keypress', { key, bubbles: true }));
-            document.activeElement?.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
-            return true;
-          },
-          args: [step.key]
-        });
+        // Dispatch to the focused element in every frame — the field may be
+        // inside an iframe, and only that frame's document sees it as focused.
+        const fn = (key) => {
+          document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }));
+          document.activeElement?.dispatchEvent(new KeyboardEvent('keypress', { key, bubbles: true }));
+          document.activeElement?.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }));
+          return true;
+        };
+        await execAllFrames(tab.id, fn, [step.key]);
         return { ok: true, done: `pressed ${step.key}` };
       }
 
@@ -498,13 +542,38 @@ async function poll() {
               url: location.href,
               title: document.title,
               text: document.body?.innerText?.slice(0, 12000) || '',
+              inputs: [...document.querySelectorAll('input,textarea,select')]
+                .map(el => ({ tag: el.tagName, type: el.type, name: el.name, placeholder: el.placeholder }))
+                .slice(0, 20),
               links: [...document.querySelectorAll('a')]
                 .map(a => ({ text: (a.innerText || a.getAttribute('title') || '').trim(), href: a.href }))
                 .filter(l => l.text && l.href && l.href.startsWith('http'))
                 .slice(0, 60)
             })
           });
-          pageData = res.result;
+          pageData = res.result || {};
+          // Include iframe inputs (login forms inside cross-origin frames)
+          try {
+            const frames = await chrome.scripting.executeScript({
+              target: { tabId: tab.id, allFrames: true },
+              func: () => {
+                if (window === window.top) return null;
+                return {
+                  frameUrl: location.href.slice(0, 200),
+                  inputs: [...document.querySelectorAll('input,textarea,select')]
+                    .map(el => ({ tag: el.tagName, type: el.type, name: el.name, placeholder: el.placeholder }))
+                    .slice(0, 15)
+                };
+              }
+            });
+            const fds = (frames || []).map(f => f.result).filter(Boolean);
+            if (fds.length) {
+              pageData.frames = fds;
+              for (const f of fds) {
+                pageData.inputs = (pageData.inputs || []).concat(f.inputs).slice(0, 25);
+              }
+            }
+          } catch {}
         }
       } catch {}
 
