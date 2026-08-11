@@ -1,0 +1,30 @@
+Full PC/browser control + Companion (tabs/meeting/screen) + Zoom join & summary
+
+Full access:
+- backend/app11.py: FULL_ACCESS now defaults ON (approvals bypassed; OS-fatal
+  commands still hard-block: format, diskpart, bcdedit, system-folder deletes)
+Screen awareness ("see what I'm doing"):
+- agent/jarvis_agent.py: act_screenshot also returns a compact JPEG base64 in
+  the step result; run_steps forwards it in the step log
+- backend: _describe_screen (Groq vision) runs on any desktop screenshot with
+  image data in /api/desktop/result -> stored in screen_last + surfaced via
+  Telegram + desktop_answers; /api/desktop/status includes it
+- DESKTOP_RE now routes "what am i doing", "describe my screen", "look at my
+  screen", "what's on my screen" to the desktop agent
+- agent/companion.html: status line shows the last screen description
+Browser tabs (view + control everywhere):
+- extension pushes a tab snapshot to /api/browser/tabs on activity + every ~10s;
+  new tabs_refresh action
+- backend: /api/browser/command (whitelisted switch_tab/close_tab/new_tab/
+  list_tabs) enqueues a browser job; /api/browser/status includes tabs
+- agent/companion.html: Browser tabs card (live list, Switch/Close, new-tab box)
+Zoom meetings + whole-meeting summary:
+- extension: zoom_join action (landing -> browser join -> name -> join -> audio),
+  meeting_start/meeting_stop, tab-audio capture (tabCapture + MediaRecorder,
+  60s webm chunks -> backend), auto-end + summarize on tab close/leave Zoom;
+  manifest 1.2.4
+- backend: _groq_transcribe (Groq Whisper, env GROQ_WHISPER_MODEL),
+  _summarize_meeting, meeting_sessions, POST /api/meeting/audio +
+  /api/meeting/end + GET /api/meeting/status; MEETING_JOIN_RE routes "join my
+  zoom meeting" to the browser pipeline, MEETING_END_RE summarizes directly
+- agent/companion.html: Meeting card (live status + End & Summarize)

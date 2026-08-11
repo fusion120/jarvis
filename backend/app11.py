@@ -24,6 +24,7 @@ CORS(app, origins=[ALLOWED_ORIGIN] if ALLOWED_ORIGIN != "*" else "*",
 GROQ_KEY       = os.getenv("GROQ_API_KEY", "").strip()  # strip trailing newline (Render env quirk)
 GROQ_MODEL     = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")  # free on console.groq.com
 GROQ_VISION    = os.getenv("GROQ_VISION_MODEL", "llama-3.2-90b-vision-preview")  # multimodal (image input)
+GROQ_WHISPER   = os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3-turbo")  # meeting transcription
 VISION_TTL     = int(os.getenv("VISION_TTL_SECS", "120"))   # how long a webcam analysis stays "current"
 API_SECRET     = os.getenv("API_SECRET", "")       # random string you set on Render
 TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -40,7 +41,9 @@ DIGEST_TZ      = os.getenv("DIGEST_TZ", "+00:00")   # timezone offset, e.g. -05:
 # Full access: MIMO/Jarvis can run commands & write files anywhere on Mohamed's
 # PC with NO approval prompts. OS-fatal commands still hard-block (format,
 # diskpart, bcdedit, system-folder deletes) so a bad step can't brick Windows.
-FULL_ACCESS    = os.getenv("FULL_ACCESS", "0") == "1"
+# Default ON (Mohamed asked for full control); set FULL_ACCESS=0 on Render to
+# bring back the approval prompts.
+FULL_ACCESS    = os.getenv("FULL_ACCESS", "1") == "1"
 
 SYSTEM = ("You are Jarvis — Mohamed's personal AI assistant. "
           "He's a web design student and freelancer in Katy/Houston, TX building local business "
@@ -104,6 +107,7 @@ seen_emails      = set()
 
 # ── VISION STATE ─────────────────────────────────────────────────────
 vision_latest    = None   # {ts, emotion, gaze_target, objects_held, activity, scene_text, on_screen, look_desc, faces, dist}
+screen_last      = {}     # {ts, desc, task_id} — last vision-described desktop screenshot
 mimo_mood        = {"state": "neutral", "energy": 0.5, "ts": 0.0}   # MIMO's current mood
 mimo_memory      = []     # rolling episodic scene log: {ts, emotion, gaze_target, objects_held, scene_text}
 # Observation memory: MIMO's baseline of how Mohamed looks + when he's usually around.
@@ -194,6 +198,65 @@ def _groq_call(messages, system=None, max_tokens=2000, temperature=0.7):
             except Exception:
                 pass
         print(f"Groq API error: {e}{detail}")
+        return None
+
+def _groq_transcribe(audio_bytes, hint=None):
+    """Transcribe one audio chunk via Groq Whisper (file-based, OpenAI-compatible).
+    Returns text or None. Hint = the previous line, helps Whisper keep context."""
+    if not GROQ_KEY:
+        print("meeting: GROQ_API_KEY missing, transcription skipped")
+        return None
+    try:
+        files = {"file": ("chunk.webm", audio_bytes, "audio/webm")}
+        data = {"model": GROQ_WHISPER}
+        if hint:
+            data["prompt"] = hint[-500:]
+        r = requests.post("https://api.groq.com/openai/v1/audio/transcriptions",
+                          headers={"Authorization": f"Bearer {GROQ_KEY}"},
+                          files=files, data=data, timeout=90)
+        if r.status_code == 429:
+            print("meeting: Groq Whisper rate-limited (429) — chunk skipped")
+            return None
+        r.raise_for_status()
+        return (r.json() or {}).get("text") or None
+    except Exception as e:
+        detail = getattr(e, "response", None)
+        detail = detail.text[:300] if detail is not None and hasattr(detail, "text") else str(e)[:200]
+        print(f"meeting: whisper error: {detail}")
+        return None
+
+MEETING_SUMMARY_SYSTEM = """You are Jarvis summarizing a meeting Mohamed asked you to attend. From the transcript, produce a concise, useful summary with these sections (skip any that don't apply):
+- 📌 What was discussed
+- ✅ Decisions made
+- 📝 Action items (who does what / deadlines)
+- 💡 Key takeaways
+Use short bullets. If the transcript is empty or just small talk, say so honestly. Keep it under 400 words."""
+
+def _summarize_meeting(transcript_text):
+    """Summarize a full meeting transcript into structured notes."""
+    if not transcript_text or len(transcript_text.strip()) < 20:
+        return "The meeting capture produced no usable transcript — either the meeting was very short or audio transcription was rate-limited."
+    return (_groq_call([{"role": "user", "content": transcript_text[-14000:]}],
+                       system=MEETING_SUMMARY_SYSTEM, max_tokens=1200)
+            or "Couldn't summarize — Groq is unavailable.")
+
+def _describe_screen(image_b64):
+    """Vision-describe what's on Mohamed's screen right now (short sentence)."""
+    if not GROQ_KEY or not image_b64:
+        return None
+    try:
+        headers = {"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"}
+        body = {"model": GROQ_VISION, "max_tokens": 160, "temperature": 0.3, "messages": [{
+            "role": "user", "content": [
+                {"type": "text",
+                 "text": "This is Mohamed's computer screen RIGHT NOW. In ONE short sentence (max 20 words) describe what he is doing / what is on screen — e.g. 'Watching a music video on YouTube', 'Coding in VS Code with a Python file open', 'Chatting on WhatsApp'. Just state the fact, no 'he appears to'. If unclear, describe what is visible."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_b64}"}}]}]}
+        r = requests.post("https://api.groq.com/openai/v1/chat/completions",
+                          headers=headers, json=body, timeout=40)
+        r.raise_for_status()
+        return r.json()["choices"][0]["message"]["content"].strip()[:300]
+    except Exception as e:
+        print(f"screen vision error: {e}")
         return None
 
 def analyze_webcam(image_b64, screenshot_b64=None, gaze=None):
@@ -492,7 +555,8 @@ def outlook_loop():
 # natural-language commands (AI plans steps, then re-plans until done).
 KNOWN_ACTIONS = {"navigate","new_tab","read_page","screenshot",
                  "click_text","click_selector","type_selector","type_label","type","select_option",
-                 "search","run_js","scroll","wait","press_key",
+                 "search","run_js","scroll","wait","press_key","zoom_join",
+                 "meeting_start","meeting_stop",
                  "list_tabs","read_tab","switch_tab","close_tab",
                  "go_back","go_forward","new_window","group_tabs",
                  "save_session","restore_session","save_tab","collect_tabs"}
@@ -504,12 +568,18 @@ browser_queue     = []          # pending tasks
 browser_running   = {}          # task_id → task being executed
 browser_results   = {}          # task_id → last result
 browser_tab_state = {}          # last tab reported by the extension
+browser_tabs_list = []          # full tab snapshot (companion window)
 browser_iters     = {}          # command chain → iterations left
 browser_delivered = set()       # task ids already handed to the extension (runs-once guard)
 browser_last_seen = 0.0         # epoch seconds of last tab ping
 browser_answers   = []          # recent finished results {command, answer, ts}
 browser_sessions  = []          # saved tab sessions [{urls, ts}] (latest wins)
 research_log      = []          # cross-window saves {id,title,url,text,label,ts}
+
+# ── MEETING CAPTURE (Zoom: extension uploads audio, Groq Whisper transcribes) ──
+meeting_sessions = {}           # session_id → {transcript:[], started, last_ts}
+meeting_summaries = []          # recent {summary, ts} (last 5)
+MEETING_TRANSCRIPT_MAX = 14000  # chars of transcript kept per session
 
 # ── DESKTOP AGENT STATE (local PC control) ────────────────────────────
 # The desktop agent (agent/jarvis_agent.py) polls /api/desktop/poll and
@@ -600,6 +670,10 @@ Tab control (the "tab" field matches a tab's URL, title, or tab number):
 - {"action":"go_back"} / {"action":"go_forward"}
 - {"action":"new_window","url":"https://..."} — open in a new window
 - {"action":"group_tabs","keyword":"topic"} — group tabs matching the topic
+ZOOM MEETINGS (Mohamed asks you to join his meeting / join a Zoom link):
+- {"action":"zoom_join","url":"https://zoom.us/j/...","name":"Mohamed"} — join the Zoom meeting in the browser as Mohamed. Only use when the user says "join (my|this) (zoom )?(meeting|call)" or pastes a zoom.us/j link asking to join it. When he pastes a plain link like "zoom.us/j/123?pwd=xyz" without saying join, just open it in a tab (new_tab) and let him click — don't auto-join unless asked.
+- {"action":"meeting_start"} — after joining a meeting, start capturing the tab audio (for the summary). Pair with zoom_join when he asked to summarize the meeting.
+- {"action":"meeting_stop"} — stop capture and produce the meeting summary. Use when he says "summarize/end the meeting" (though that's usually handled directly, not via the browser).
 - {"action":"save_session"} — save all open tabs for later
 - {"action":"restore_session"} — reopen the last saved session
 - {"action":"save_tab","label":"note"} — save the current tab's text to the research log
@@ -959,7 +1033,7 @@ DESKTOP_ACTIONS = """Return a JSON object with a "steps" array (1-8 steps) of ac
 - {"action":"get_system_info"} — OS, CPU, RAM, disk usage
 - {"action":"get_network_info"} — ipconfig / active connections / ping a host
 - {"action":"network_scan"} — list devices on the local network
-- {"action":"screenshot"} — capture the screen
+- {"action":"screenshot"} — capture the screen (Jarvis then vision-describes what he's doing — use this for "what am I doing?", "describe my screen", "look at my screen", "what's on my screen")
 - {"action":"capture_webcam"} — grab one frame from Mohamed's webcam so Jarvis can see him (safe)
 - {"action":"list_windows"} — open application windows
 - {"action":"list_printers"} / {"action":"list_usb"} / {"action":"list_displays"} — hardware inventory
@@ -1232,7 +1306,7 @@ DESKTOP_RE = re.compile(
     r"printers|usb|displays|devices)|read (a |the )?(file|folder)|find (a |the |my )?(file|folder)|"
     r"screenshot|system info|system information|network info|delete (a |the )?(file|folder)|"
     r"create (a |the )?(file|folder)|write (a |the )?file|clipboard|install (a |the )?(app|program)|"
-    r"shutdown|restart (the )?pc|print (a |this )?file|what's on (my |the )?(desktop|screen)|"
+    r"shutdown|restart (the )?pc|print (a |this )?file|what'?s? on (my |the )?(desktop|screen)|"
     r"(look|see) (at |into |in )?(the )?(webcam|camera)|look at me|what do (you|u) see|"
     r"(are you|r u) (looking|watching)|can you (see|look at) me|"
     # Media / display / phone / LAN (companion app device control)
@@ -1242,7 +1316,20 @@ DESKTOP_RE = re.compile(
     r"(skip|next|previous) (this |the |)(song|track)|next (song|track)|pause (the |)music|"
     r"(screenshot|mirror) (my |the |this )?(phone|iphone)|(my |the )?(phone|iphone) (screen|screenshot)|"
     r"(scan|list|find) (my |the |this )?(network|wifi|wi-fi|devices)|what'?s? on (my |the )?network|"
-    r"(mirror|drive) (my |the )?phone)\b", re.I)
+    r"(mirror|drive) (my |the )?phone|"
+    # Screen awareness — screenshot + vision description
+    r"what am i (doing|working on|looking at)|what are (you|u) (seeing|looking at|doing)|"
+    r"describe (my |the |this )?(screen|desktop)|see what i'?m doing|look at (my |the )?screen|"
+    r"what's on (my |the )?screen)\b", re.I)
+
+# Meeting intent. Join-meeting → browser pipeline (plan_steps uses zoom_join +
+# meeting_start). Summarize/end/stop → handled directly against the session.
+MEETING_JOIN_RE = re.compile(
+    r"\bjoin (the |this |my |)zoom ?(meeting|call)\b|join (the |this |my )?(meeting|call)\b"
+    r"|zoom meeting\b|meeting invite\b", re.I)
+MEETING_END_RE = re.compile(
+    r"\b(summarize|summarise|end|stop|wrap up|finish) (the |this |my )?(meeting|call|zoom)\b"
+    r"|meeting summary\b|summarize (the |)meeting\b", re.I)
 
 # Coding intent — "write/build/make/fix" code in the workspace.
 CODE_RE = re.compile(
@@ -1771,13 +1858,30 @@ def chat():
         cmd = ("code", intake_task)
         reply = "On it — coding now."
     if not cmd:
+        # "summarize / end / stop the meeting" → summarize the capture directly.
+        if MEETING_END_RE.search(msg) and any(
+                time.time() - s["last_ts"] < 600 for s in meeting_sessions.values()):
+            for _sid, _s in list(meeting_sessions.items()):
+                if time.time() - _s["last_ts"] < 600:
+                    meeting_sessions.pop(_sid, None)
+                    break
+            _transcript = " ".join(_s["transcript"]).strip()
+            _summary = _summarize_meeting(_transcript)
+            meeting_summaries.insert(0, {"summary": _summary, "ts": time.time()})
+            del meeting_summaries[5:]
+            if _summary:
+                try:
+                    tg("🎤 <b>MEETING SUMMARY</b>\n\n" + _summary[:3000])
+                except Exception:
+                    pass
+            return jsonify({"response": "🎤 " + _summary})
         if _is_robot_cmd(msg):
             cmd = ("robot", msg)
         elif DESKTOP_RE.search(msg):
             cmd = ("desktop", msg)
         elif CODE_RE.search(msg):
             cmd = ("code", msg)
-        elif BROWSER_RE.search(msg):
+        elif BROWSER_RE.search(msg) or MEETING_JOIN_RE.search(msg):
             cmd = ("browser", msg)
 
     if cmd:
@@ -2087,16 +2191,119 @@ def browser_tab():
     browser_last_seen = time.time()
     return jsonify({"ok": True})
 
+@app.route("/api/browser/tabs", methods=["POST"])
+@auth
+def browser_tabs():
+    """Full tab snapshot pushed by the extension (companion window / status)."""
+    global browser_tabs_list, browser_last_seen
+    d = request.json or {}
+    tabs = [{"index": t.get("index", 0), "url": t.get("url", ""),
+             "title": t.get("title", ""), "active": bool(t.get("active"))}
+            for t in (d.get("tabs") or []) if t.get("url", "").startswith("http")][:40]
+    if tabs:
+        browser_tabs_list = tabs
+        browser_last_seen = time.time()
+    return jsonify({"ok": True, "count": len(tabs)})
+
+# Whitelisted tab actions the Companion window (and chat) can issue to the
+# extension through one pipeline — the same jobs the browser agent runs.
+BROWSER_TAB_COMMANDS = {"switch_tab", "close_tab", "new_tab", "list_tabs"}
+
+@app.route("/api/browser/command", methods=["POST"])
+@auth
+def browser_command():
+    d = request.json or {}
+    act = (d.get("action") or "").strip()
+    if act not in BROWSER_TAB_COMMANDS:
+        return jsonify({"error": f"action must be one of {sorted(BROWSER_TAB_COMMANDS)}"}), 400
+    steps = [{"action": act, "tab": d.get("tab"), "url": d.get("url")}]
+    task = enqueue_browser(f"[tab command] {act}", steps)
+    return jsonify({"ok": True, "task_id": task["id"], "action": act})
+
 @app.route("/api/browser/status", methods=["GET"])
 @auth
 def browser_status():
     return jsonify({
         "connected": bool(browser_tab_state) and (time.time() - browser_last_seen) < 60,
         "tab": browser_tab_state,
+        "tabs": browser_tabs_list,
         "queue": len(browser_queue),
         "running": len(browser_running),
         "results": len(browser_results),
         "last_answer": browser_answers[0] if browser_answers else None,
+    })
+
+# ── MEETING CAPTURE (Zoom) ─────────────────────────────────────────────
+@app.route("/api/meeting/audio", methods=["POST"])
+@auth
+def meeting_audio():
+    """The extension uploads a 60s webm audio chunk. We transcribe it with
+    Groq Whisper and append to the session transcript."""
+    sid = (request.form or {}).get("session_id", "") or "default"
+    f = request.files.get("file")
+    if f is None:
+        return jsonify({"ok": False, "error": "no file"}), 400
+    data = f.read()
+    if not data:
+        return jsonify({"ok": True, "note": "empty chunk"})
+    sess = meeting_sessions.get(sid)
+    if sess is None:
+        sess = {"transcript": [], "started": time.time(), "last_ts": time.time()}
+        meeting_sessions[sid] = sess
+    sess["last_ts"] = time.time()
+    hint = sess["transcript"][-1] if sess["transcript"] else None
+    text = _groq_transcribe(data, hint=hint)
+    if text:
+        t = text.strip()
+        if t:
+            stamp = datetime.datetime.now().strftime("%H:%M")
+            sess["transcript"].append(f"[{stamp}] {t}")
+            joined = " ".join(sess["transcript"])
+            if len(joined) > MEETING_TRANSCRIPT_MAX:
+                # keep the tail
+                sess["transcript"] = [joined[-MEETING_TRANSCRIPT_MAX:]]
+    # If we have a lot of sessions and this is the only active one, prune old
+    if len(meeting_sessions) > 3:
+        now = time.time()
+        for k, s in list(meeting_sessions.items()):
+            if now - s["last_ts"] > 3600 and k != sid:
+                meeting_sessions.pop(k, None)
+    return jsonify({"ok": True, "transcribed": bool(text)})
+
+@app.route("/api/meeting/end", methods=["POST"])
+@auth
+def meeting_end():
+    """Finalize a meeting: summarize the transcript, deliver to Telegram,
+    store it, and clear the session."""
+    d = request.json or {}
+    sid = (d.get("session_id") or "") or "default"
+    sess = meeting_sessions.pop(sid, None)
+    if not sess:
+        return jsonify({"ok": True, "summary": None, "note": "no active session"})
+    transcript = " ".join(sess["transcript"]).strip()
+    summary = _summarize_meeting(transcript)
+    meeting_summaries.insert(0, {"summary": summary, "ts": time.time()})
+    del meeting_summaries[5:]
+    if summary:
+        try:
+            tg("🎤 <b>MEETING SUMMARY</b>\n\n" + summary[:3000])
+        except Exception:
+            pass
+    return jsonify({"ok": True, "summary": summary, "minutes": round((time.time() - sess["started"]) / 60, 1)})
+
+@app.route("/api/meeting/status", methods=["GET"])
+@auth
+def meeting_status():
+    active = None
+    for sid, s in list(meeting_sessions.items()):
+        if time.time() - s["last_ts"] < 600:
+            active = {"session_id": sid, "since": s["started"],
+                      "minutes": round((time.time() - s["started"]) / 60, 1),
+                      "lines": len(s["transcript"])}
+            break
+    return jsonify({
+        "active": active,
+        "last_summary": meeting_summaries[0] if meeting_summaries else None,
     })
 
 @app.route("/api/browser/task", methods=["POST"])
@@ -2203,6 +2410,7 @@ def desktop_status():
         "queue": len(desktop_queue), "running": len(desktop_running),
         "pending": len(desktop_pending), "results": len(desktop_results),
         "recent": recent,
+        "screen": screen_last if (screen_last and time.time() - screen_last.get("ts", 0) < 600) else None,
     })
 
 @app.route("/api/desktop/poll", methods=["GET"])
@@ -2239,6 +2447,20 @@ def desktop_result():
     if len(desktop_results) > 40:
         for k in list(desktop_results)[:-40]:
             desktop_results.pop(k, None)
+
+    # Screen awareness: if a screenshot came back with image data, vision-
+    # describe what Mohamed is doing and surface it (Telegram + answers list).
+    img = next((s.get("image_b64") or "" for s in steps if s.get("image_b64")), "")
+    if img and len(img) > 1000:
+        desc = _describe_screen(img)
+        if desc:
+            screen_last.update({"ts": time.time(), "desc": desc, "task_id": tid})
+            desktop_answers.insert(0, {"command": "screen", "answer": desc, "ts": time.time()})
+            del desktop_answers[10:]
+            try:
+                tg("👀 " + desc)
+            except Exception:
+                pass
 
     errs = [s for s in steps if s.get("error")]
     # Coding loop: keep re-planning (finishing or fixing errors) until done

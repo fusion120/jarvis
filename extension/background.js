@@ -83,6 +83,22 @@ const TYPE_LABEL_FN = new Function('labelText', 'val', TYPE_INTO_FN + `
 `);
 
 // ── TRACK CURRENT TAB ─────────────────────────────────────────────────
+async function pushTabList() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    const list = tabs
+      .filter(t => t.url && t.url.startsWith('http'))
+      .map(t => ({ index: t.index, url: t.url, title: t.title || '', active: !!t.active }))
+      .slice(0, 40);
+    if (BACKEND) {
+      fetch(`${BACKEND}/api/browser/tabs`, {
+        method: 'POST', headers: headers(),
+        body: JSON.stringify({ tabs: list })
+      }).catch(() => {});
+    }
+  } catch {}
+}
+
 chrome.tabs.onActivated.addListener(async (info) => {
   try {
     const tab = await chrome.tabs.get(info.tabId);
@@ -93,12 +109,95 @@ chrome.tabs.onActivated.addListener(async (info) => {
         body: JSON.stringify(currentTab)
       }).catch(() => {});
     }
+    pushTabList();
   } catch {}
 });
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete' && tab.active) {
     currentTab = { url: tab.url || '', title: tab.title || '' };
+    pushTabList();
+  }
+});
+
+// ── MEETING CAPTURE (Zoom tab audio → backend transcription) ─────────
+// Records the tab's audio in 60s webm chunks and uploads each to the
+// backend, which transcribes via Groq Whisper and summarizes at the end.
+let meetingCapture = null;   // {tabId, recorder, stream, sessionId, blobQueue, flushing}
+
+async function flushChunks(mc) {
+  if (!mc || mc.flushing) return;
+  mc.flushing = true;
+  while (mc.blobQueue.length) {
+    const blob = mc.blobQueue.shift();
+    try {
+      const fd = new FormData();
+      fd.append('session_id', mc.sessionId);
+      fd.append('file', blob, 'chunk.webm');
+      await fetch(`${BACKEND}/api/meeting/audio`, {
+        method: 'POST', headers: headers(), body: fd,
+        signal: AbortSignal.timeout(90000)
+      });
+    } catch (e) { /* dropped chunk — transcription continues with the next */ }
+  }
+  mc.flushing = false;
+}
+
+async function meetingStart() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return { ok: false, error: 'No active tab' };
+    if (meetingCapture) return { ok: true, done: 'already capturing this meeting' };
+    const stream = await chrome.tabCapture.capture({ audio: true, video: false });
+    const mime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+      ? 'audio/webm;codecs=opus' : '';
+    const rec = mime
+      ? new MediaRecorder(stream, { mimeType: mime, audioBitsPerSecond: 64000 })
+      : new MediaRecorder(stream);
+    const mc = {
+      tabId: tab.id, recorder: rec, stream,
+      sessionId: 'm' + Date.now().toString(36),
+      blobQueue: [], flushing: false
+    };
+    meetingCapture = mc;
+    rec.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) { mc.blobQueue.push(e.data); flushChunks(mc); }
+    };
+    rec.start(60000);
+    return { ok: true, done: 'meeting capture started (session ' + mc.sessionId + ')' };
+  } catch (e) {
+    return { ok: false, error: 'capture failed: ' + (e.message || e) };
+  }
+}
+
+async function meetingStop() {
+  const mc = meetingCapture;
+  if (!mc) return { ok: false, error: 'no meeting capture active' };
+  meetingCapture = null;
+  try { mc.recorder.stop(); } catch {}
+  try { mc.stream.getTracks().forEach(t => t.stop()); } catch {}
+  await sleep(600);                       // let the final ondataavailable land
+  await flushChunks(mc);                  // upload anything still queued
+  try {
+    const r = await fetch(`${BACKEND}/api/meeting/end`, {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify({ session_id: mc.sessionId })
+    });
+    const d = await r.json().catch(() => ({}));
+    const sum = (d && d.summary) || '';
+    return { ok: true, done: sum ? 'Meeting summarized.' : 'Meeting capture ended.', summary: sum };
+  } catch (e) {
+    return { ok: false, error: 'meeting end failed: ' + (e.message || e) };
+  }
+}
+
+// Auto-end: close the tab or leave Zoom while capturing → summarize.
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (meetingCapture && meetingCapture.tabId === tabId) meetingStop().catch(() => {});
+});
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (meetingCapture && meetingCapture.tabId === tabId && tab.url && !tab.url.includes('zoom.us')) {
+    meetingStop().catch(() => {});
   }
 });
 
@@ -115,6 +214,41 @@ async function findTabByTarget(target) {
       || tabs.find(t => (t.title || '').toLowerCase().includes(s)) || null;
 }
 
+// ── ZOOM JOIN HELPERS ────────────────────────────────────────────────
+async function tryZoomClick(tabId, texts) {
+  for (const t of texts) {
+    const res = await execAllFrames(tabId, CLICK_TEXT_FN, [t]);
+    if (res.some(r => r.result)) return true;
+  }
+  return false;
+}
+
+async function zoomTypeName(tabId, name) {
+  // Prefer Zoom's name field, then a placeholder/label match, across frames.
+  const fn = new Function('name', `
+    const find = (doc) => {
+      const inputs = [...doc.querySelectorAll('input')].filter(el => el.offsetParent !== null);
+      let el = doc.querySelector('#input-for-name input') || doc.querySelector('#input-for-name')
+        || inputs.find(e => (e.placeholder || '').toLowerCase().includes('name'))
+        || inputs.find(e => (e.name || '').toLowerCase() === 'name');
+      if (!el || !el.setAttribute) return false;
+      const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (setter) setter.call(el, name); else el.value = name;
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: name }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    };
+    if (find(document)) return true;
+    for (const f of document.querySelectorAll('iframe')) {
+      try { if (f.contentDocument && find(f.contentDocument)) return true; } catch (e) {}
+    }
+    return false;
+  `);
+  const res = await chrome.scripting.executeScript({ target: { tabId }, func: fn, args: [name] });
+  return !!(res && res[0] && res[0].result);
+}
+
 // ── EXECUTE A SINGLE STEP ─────────────────────────────────────────────
 async function execStep(step) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -127,6 +261,42 @@ async function execStep(step) {
         await chrome.tabs.update(tab.id, { url: step.url });
         await waitForLoad(tab.id);
         return { ok: true, done: 'navigated to ' + step.url };
+
+      case 'zoom_join': {
+        // Join a Zoom meeting in the browser as Mohamed (best-effort against
+        // Zoom's changing markup; the agent loop finishes anything unresolved).
+        try {
+          if (step.url) {
+            await chrome.tabs.update(tab.id, { url: step.url });
+            await waitForLoad(tab.id);
+          }
+          await sleep(1800);
+          // Landing page: prefer the "join from your browser" link, else Launch Meeting.
+          let hit = await tryZoomClick(tab.id, ['join from your browser']);
+          if (!hit) hit = await tryZoomClick(tab.id, ['Launch Meeting']);
+          await sleep(3000);
+          // Web client: type the display name.
+          const typed = await zoomTypeName(tab.id, step.name || 'Mohamed');
+          await sleep(600);
+          // Join the meeting (lobby → in-call; button labels vary).
+          const joined = await tryZoomClick(tab.id, ['Join Meeting', 'Join']) || hit;
+          await sleep(3500);
+          // Join audio prompt (missing is fine — user can click manually).
+          await tryZoomClick(tab.id, ['Join with Computer Audio', 'Join Audio by Computer']);
+          return {
+            ok: true,
+            done: `zoom join attempted (browser-join=${hit}, name=${typed ? 'typed' : 'pending'}, joined=${joined ? 'yes' : 'check page'})`
+          };
+        } catch (e) {
+          return { ok: false, error: 'zoom_join failed: ' + (e.message || e) };
+        }
+      }
+
+      case 'meeting_start':
+        return await meetingStart();
+
+      case 'meeting_stop':
+        return await meetingStop();
 
       case 'new_tab':
         const newTab = await chrome.tabs.create({ url: step.url || 'about:blank' });
@@ -420,6 +590,15 @@ async function execStep(step) {
         return { ok: true, done: JSON.stringify(list) };
       }
 
+      case 'tabs_refresh': {
+        const tabs = await chrome.tabs.query({});
+        const list = tabs
+          .filter(t => t.url && t.url.startsWith('http'))
+          .map(t => ({ index: t.index, url: t.url, title: t.title || '', active: !!t.active }))
+          .slice(0, 40);
+        return { ok: true, done: JSON.stringify(list) };
+      }
+
       case 'read_tab': {
         const target = await findTabByTarget(step.tab);
         if (!target) return { ok: false, error: `tab "${step.tab}" not found` };
@@ -661,11 +840,23 @@ chrome.runtime.onMessage.addListener((msg, sender, reply) => {
 // only an alarm (or a runtime message) can wake it again. The alarm fires
 // every 30s, so even after a kill, polling resumes within half a minute.
 let polling = false;
+let lastTabPush = 0;
 async function pollLoop() {
   if (polling) return;
   polling = true;
   try {
     await poll();
+    // Keep the backend's tab snapshot fresh even without tab activity.
+    const now = Date.now();
+    if (now - lastTabPush > 10000) {
+      lastTabPush = now;
+      pushTabList();
+    }
+    // Meeting capture health: if the recorder died silently, clear it so a
+    // future meeting_start can begin fresh.
+    if (meetingCapture && meetingCapture.recorder && meetingCapture.recorder.state !== 'recording') {
+      meetingCapture = null;
+    }
   } catch (e) {
     connected = false;
   } finally {

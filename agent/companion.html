@@ -66,6 +66,7 @@
   <div class="status-line">
     <span class="sdot" id="dot"></span><span id="conn">checking…</span>
   </div>
+  <div class="status-line muted" id="screen-line" style="display:none">👀 <span id="screen-desc"></span></div>
 </header>
 
 <div class="card">
@@ -130,6 +131,24 @@
     <button onclick="act('media',{command:'play_pause'})">⏯</button>
     <button onclick="act('media',{command:'next'})">⏭</button>
   </div>
+</div>
+
+<div class="card">
+  <h2>Browser tabs <span class="tag off" id="bt-dot">—</span></h2>
+  <div class="bar" style="margin-bottom:10px">
+    <input type="text" id="newtab-url" placeholder="https://… open a new tab" onkeydown="if(event.key==='Enter')newTab()">
+    <button onclick="newTab()">Open</button>
+  </div>
+  <div id="tablist"><div class="empty">No tab data yet — is the extension running?</div></div>
+</div>
+
+<div class="card">
+  <h2>Meeting <span class="tag off" id="mt-tag">no meeting</span></h2>
+  <div class="row">
+    <span class="muted" id="mt-info" style="flex:1;align-self:center">No meeting capture active.</span>
+    <button class="red" id="mt-end" onclick="endMeeting()" style="display:none">🛑 End &amp; Summarize</button>
+  </div>
+  <div id="mt-summary" class="log" style="margin-top:10px;display:none"></div>
 </div>
 
 <div class="card">
@@ -222,6 +241,14 @@ async function loadActivity(){
   if(d.queue)parts.push(d.queue+' queued');
   if(d.running)parts.push(d.running+' running');
   if(d.pending)parts.push(d.pending+' need approval');
+  // Screen awareness — last vision-described screenshot
+  const sl=document.getElementById('screen-line');
+  if(d.screen&&d.screen.desc){
+    document.getElementById('screen-desc').textContent=d.screen.desc;
+    sl.style.display='';
+  }else{
+    sl.style.display='none';
+  }
   document.getElementById('conn').textContent=parts.join(' · ');
   const box=document.getElementById('activity');
   if(!d.recent||!d.recent.length){box.innerHTML='<div class="empty">No results yet.</div>';return;}
@@ -238,11 +265,81 @@ async function loadLocal(){
   tag.className='tag '+(d.last_poll_ok?'ok':'warn');
   document.getElementById('log').textContent=(d.log_tail||[]).join('\n')||'(no log yet)';
 }
+// ── BROWSER TABS ─────────────────────────────────────────────────────
+async function tabCmd(action,tab,url){
+  const d=await proxy('/api/browser/command','POST',{action,tab,url});
+  if(d&&d.ok)toast('Tab '+action+(tab?' "':'"')+(tab||url||'')+(tab?'"':'')+' sent.');
+  else toast('⚠ '+(d&&d.error||'command failed'),'err');
+}
+function renderTabs(tabs){
+  const dot=document.getElementById('bt-dot');
+  const box=document.getElementById('tablist');
+  if(!tabs||!tabs.length){
+    dot.className='tag off';dot.textContent='—';
+    box.innerHTML='<div class="empty">No tabs reported — reload the extension (chrome://extensions).</div>';
+    return;
+  }
+  dot.className='tag ok';dot.textContent=tabs.length+' open';
+  box.innerHTML=tabs.map(t=>{
+    const host=(t.url||'').split('/')[2]||'';
+    const isActive=t.active?'border-color:var(--accent)':'';
+    return '<div class="item" style="'+isActive+'border-radius:8px;padding:6px 8px;'+(t.active?'background:var(--accent-dim)':'')+'">'
+      +'<span class="tag '+(t.active?'busy':'off')+'">'+(t.active?'●':'')+'</span>'
+      +'<div class="t"><div style="font-weight:600">'+esc(t.title||t.url)+'</div>'
+      +'<div class="muted">'+esc(host)+'</div></div>'
+      +'<button style="font-size:11px" onclick="tabCmd(\'switch_tab\',\''+esc(t.index)+'\')">⇥ Switch</button>'
+      +'<button class="red" style="font-size:11px" onclick="tabCmd(\'close_tab\',\''+esc(t.index)+'\')">✕</button>'
+      +'</div>';
+  }).join('');
+}
+async function loadTabs(){
+  const d=await proxy('/api/browser/status','GET');
+  renderTabs(d&&d.tabs);
+}
+function newTab(){
+  const inp=document.getElementById('newtab-url');const u=inp.value.trim();if(!u)return;
+  inp.value='';
+  tabCmd('new_tab','',/^https?:\/\//i.test(u)?u:'https://'+u);
+}
+// ── MEETING ──────────────────────────────────────────────────────────
+async function loadMeeting(){
+  const d=await proxy('/api/meeting/status','GET');
+  if(!d)return;
+  const tag=document.getElementById('mt-tag');
+  const info=document.getElementById('mt-info');
+  const end=document.getElementById('mt-end');
+  if(d.active){
+    tag.className='tag busy';tag.textContent='● live';
+    info.textContent='Capturing for '+Math.round(d.active.minutes)+' min · '+d.active.lines+' transcribed lines.';
+    end.style.display='';
+  }else{
+    tag.className='tag off';tag.textContent='no meeting';
+    info.textContent=d.last_summary?'Last summary from '+(d.last_summary.ts?ts(d.last_summary.ts):'recently')+'.':'No meeting capture active.';
+    end.style.display='none';
+  }
+  const box=document.getElementById('mt-summary');
+  if(d.last_summary&&d.last_summary.summary){
+    box.style.display='block';
+    box.textContent=d.last_summary.summary;
+  }else{
+    box.style.display='none';
+  }
+}
+async function endMeeting(){
+  const d=await proxy('/api/meeting/end','POST',{});
+  const box=document.getElementById('mt-summary');
+  box.style.display='block';
+  if(d&&d.summary)box.textContent=d.summary;
+  else box.textContent=(d&&d.note)||'No summary produced.';
+  toast('Meeting ended — summary below.','');
+  loadMeeting();
+}
 async function pollAll(){
-  loadLocal();loadActivity();loadApprovals();devices();
+  loadLocal();loadActivity();loadApprovals();devices();loadTabs();loadMeeting();
 }
 setInterval(pollAll,4000);
 setInterval(devices,15000);
+setInterval(loadTabs,5000);
 pollAll();
 </script>
 </body>

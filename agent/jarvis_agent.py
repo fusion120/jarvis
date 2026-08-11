@@ -20,7 +20,7 @@ Double-click run_agent.bat (or `python jarvis_agent.py`). You'll be asked for:
 It saves those to agent_config.json (gitignored). Env vars JARVIS_BACKEND /
 JARVIS_SECRET / JARVIS_WORKSPACE override the file.
 """
-import os, sys, json, time, re, threading, subprocess, shutil, ctypes, platform, datetime, webbrowser
+import os, sys, json, time, re, threading, subprocess, shutil, ctypes, platform, datetime, webbrowser, io, base64
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -80,7 +80,7 @@ def load_config():
     return cfg
 
 # ── SMALL HELPERS ───────────────────────────────────────────────────────
-def ok(done):       return {"ok": True,  "done": done}
+def ok(done, **extra): return {"ok": True, "done": done, **extra}
 def err(msg):       return {"ok": False, "error": str(msg)[:500]}
 def _abs(p):        return os.path.abspath(os.path.expanduser(p or workspace))
 def _in_workspace(p):
@@ -226,9 +226,19 @@ def act_screenshot(step):
         os.makedirs(shots, exist_ok=True)
         name = "screen_" + datetime.datetime.now().strftime("%Y%m%d_%H%M%S") + ".png"
         path = os.path.join(shots, name)
-        ImageGrab.grab().save(path)
+        img = ImageGrab.grab()
+        img.save(path)
         url = f"http://localhost:{FILE_SERVER_PORT}/screens/{name}"
-        return ok(f"Saved {path} ({os.path.getsize(path):,} B). View on this PC: {url}")
+        # Compact JPEG base64 so the cloud backend can vision-describe the
+        # screen ("what am I doing?"). Skipped on failure — not fatal.
+        b64 = ""
+        try:
+            buf = io.BytesIO()
+            img.convert("RGB").save(buf, format="JPEG", quality=55)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        except Exception:
+            b64 = ""
+        return ok(f"Saved {path} ({os.path.getsize(path):,} B). View on this PC: {url}", image_b64=b64)
     except Exception as e:
         return err(f"Screenshot failed: {e}")
 
@@ -818,7 +828,8 @@ def run_task(task):
         except Exception as e:
             res = err(f"{type(e).__name__}: {e}")
         log_steps.append({"action": step.get("action"), "ok": res.get("ok"),
-                          "done": res.get("done", ""), "error": res.get("error", "")})
+                          "done": res.get("done", ""), "error": res.get("error", ""),
+                          "image_b64": res.get("image_b64", "")})
         if not res.get("ok"):
             break
     return log_steps
