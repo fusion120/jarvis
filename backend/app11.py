@@ -64,7 +64,11 @@ CHAT_SYSTEM = SYSTEM + ("\n\nYou can also control Mohamed's browser through the 
     "me example drafts' — NEVER explain how to do it yourself. Reply with one short acknowledgment line, "
     "then END your reply with exactly one line: [[BROWSER]]<short imperative command> describing the whole "
     "task, e.g. [[BROWSER]]open mail.google.com, read the inbox, summarize the 5 newest messages and draft "
-    "replies. Do NOT add that line for pure chat questions.")
+    "replies. Do NOT add that line for pure chat questions. General knowledge or opinion questions — "
+    "'what's the best coffee place in Texas', 'best restaurant in Houston', 'is X good' — just answer "
+    "directly from what you know; do NOT dispatch the browser unless he explicitly asks you to look up / "
+    "search / find / compare something online (like 'look for the best water bottle under $30', 'search "
+    "top-rated laptops', 'recommend a good X under $Y', 'compare these two models').")
 
 CHAT_SYSTEM += ("\n\nYou can ALSO control Mohamed's PC through the Jarvis desktop agent (a program running "
     "on his Windows machine). When he asks you to DO something on his computer — open an app or file, run a "
@@ -582,7 +586,7 @@ ACTIONS_DOC = """Return a JSON object with a "steps" array (1-8 steps). Allowed 
 To find a video/article/result: navigate to the site, use {"action":"search","query":"..."} on its search box, wait, then read_page and click the matching result by its title text. Prefer clicking by visible text; add a wait after navigating.
 There is NO "play" action. To play a video/song: open the site, read_page, then {"action":"click_text","text":"<a video title>"} to start it. For "a random video/song", click the first video/song title you see on the page. For "a video about X", search for X first, then click the top result.
 When the user asks you to TYPE, WRITE, ENTER, or SEND text (a chat message, a comment, a form field, an email draft): actually do it — select the field, then use {"action":"type","value":"..."} if it is already focused, otherwise {"action":"type_label","label":"...","value":"..."} or {"action":"type_selector","selector":"...","value":"..."} to target it. Typing works on inputs, textareas, AND contenteditable editors (Gmail, X/Twitter, Notion-style). To submit, press Enter with {"action":"press_key","key":"Enter"} or click the send button. Do NOT just describe the text or give up — type it for real.
-For BEST / RECOMMEND / COMPARISON tasks ("best X under $Y", "top-rated X", "recommend a good X"): do REAL multi-source research. Run the search on 2-3 different sites (Google, plus a review/forum site, plus the official or manufacturer site), read the pages, and compare at least 3-4 specific named models. The final answer must name actual products you saw — model name, approximate price, 1-2 key features each, and the source URL. Never invent product names, prices, or specs; if you only found one solid source, say so and still name what you found.
+For EXPLICIT RESEARCH / SHOPPING tasks — the user asks you to LOOK FOR / SEARCH / FIND / COMPARE a product or place ("look for the best water bottle under $30", "search top-rated laptops", "recommend a good X under $Y", "compare these two models"): do REAL multi-source research. Run the search on 2-3 different sites (Google, plus a review/forum site, plus the official or manufacturer site), read the pages, and compare at least 3-4 specific named models. The final answer must name actual products you saw — model name, approximate price, 1-2 key features each, and the source URL. Never invent product names, prices, or specs; if you only found one solid source, say so and still name what you found. This applies to RESEARCH REQUESTS ONLY — do NOT treat a plain opinion question like "what's the best coffee place in Texas" as a research task; answer that directly from knowledge.
 {"action":"read_page"} returns the page's visible text (up to ~12k chars) AND up to 80 links with their titles — scan those links to choose what to click.
 TO FIND something the user asked for, keep going until you actually see it: search the site, read_page, and scan the links it returns. If the answer is not on the page yet, scroll down ({"action":"scroll","y":800} triggers lazy-loaded content on feeds and infinite-scroll sites), read_page again, and click "Next" / "Load more" / page numbers to move through result pages. You may batch several commands at once: search → wait → read_page → scroll → click. Do NOT give up after one page — work through several pages or refine the search before declaring failure.
 When the user asks to OPEN a site (e.g. "open youtube", "open google"), use {"action":"new_tab","url":"https://..."} — it opens in a NEW TAB and becomes active. Do NOT use navigate for open-requests.
@@ -1701,8 +1705,15 @@ def chat():
     cmd = None
     m = re.search(r"\[\[BROWSER\]\]\s*([^\[]*)", reply)
     if m and m.group(1).strip():
-        reply = re.sub(r"\[\[BROWSER\]\][^\[]*", "", reply).rstrip()
-        cmd = ("browser", m.group(1).strip())
+        _pre = reply[:m.start()].strip()
+        if len(_pre) > 150:
+            # The model already answered the question in full — this is a pure
+            # chat reply that mistakenly gained a [[BROWSER]] tag. Keep the
+            # answer, drop the dispatch (no "I've queued" line, no browser job).
+            reply = _pre
+        else:
+            reply = re.sub(r"\[\[BROWSER\]\][^\[]*", "", reply).rstrip()
+            cmd = ("browser", m.group(1).strip())
     dm = re.search(r"\[\[DESKTOP\]\]\s*([^\[]*)", reply)
     if dm and dm.group(1).strip():
         reply = re.sub(r"\[\[DESKTOP\]\][^\[]*", "", reply).rstrip()
