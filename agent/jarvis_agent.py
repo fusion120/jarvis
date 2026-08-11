@@ -915,8 +915,10 @@ def _proxy_backend(path, method="GET", data=None):
                    "X-Jarvis-Token": _SECRET,
                    "X-Jarvis-Workspace": _WORKSPACE}
         url = _BACKEND + path
+        # POSTs get a long timeout: Render free-tier sleeps and can take ~40s to
+        # cold-start, so a chat/meeting call must be allowed to wait.
         if method == "POST":
-            r = requests.post(url, json=data or {}, headers=headers, timeout=25)
+            r = requests.post(url, json=data or {}, headers=headers, timeout=60)
         else:
             r = requests.get(url, headers=headers, timeout=25)
         try:
