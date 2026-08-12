@@ -7,7 +7,7 @@ services:
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: gunicorn --chdir backend -w 1 -b 0.0.0.0:$PORT app11:app
+    startCommand: gunicorn --chdir backend -w 1 -b 0.0.0.0:$PORT --timeout 120 app11:app
     healthCheckPath: /
     envVars:
       - key: GROQ_API_KEY        # REQUIRED — get a free key at console.groq.com
