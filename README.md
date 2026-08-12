@@ -1,11 +1,11 @@
 # Jarvis
 
-Personal AI assistant for Mohamed. Flask backend (Render) + static website (Netlify) + Chrome extension for browser control.
+Personal AI assistant for Mohamed. Flask backend (Render) + static website (GitHub Pages — jarvisbot.dev) + Chrome extension for browser control.
 
 ## Structure
 
 - `backend/` — Flask API (deploy to Render)
-- `frontend/` — website (deploy to Netlify)
+- `frontend/` — website (GitHub Pages — auto-deployed on push to `main`)
 - `extension/` — Chrome extension (load unpacked)
 - `agent/` — local desktop agent (run on the PC for full control + coding)
 
@@ -13,7 +13,7 @@ Personal AI assistant for Mohamed. Flask backend (Render) + static website (Netl
 
 1. **Render** — New Web Service → connect repo → root directory `backend` → build command `pip install -r requirements.txt` → start command `gunicorn app11:app`
 2. **Environment variables (Render):** `GROQ_API_KEY` (required — from console.groq.com, free). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `CANVAS_TOKEN`, `CANVAS_DOMAIN`, `OUTLOOK_EMAIL`, `OUTLOOK_PASSWORD`, `DIGEST_TIME` (HH:MM, default `12:00` UTC), `DIGEST_TZ` (offset, e.g. `-05:00` for Houston)
-3. **Netlify** — import the repo; `netlify.toml` already sets the base to `frontend`
+3. **GitHub Pages** — nothing to do; pushing to `main` auto-deploys `frontend/` via `.github/workflows/deploy.yml` to `jarvisbot.dev` (DNS: apex `jarvisbot.dev` → A records `185.199.108.153` / `185.199.109.153` / `185.199.110.153` / `185.199.111.153`, optional `www` → CNAME `fusion120.github.io`)
 4. **Chrome** — `chrome://extensions` → Developer mode → Load unpacked → select `extension/` → set the backend URL in the popup
 
 ## Browser control
