@@ -1345,6 +1345,11 @@ CODE_RE = re.compile(
 HUMANIZER_SYSTEM = """
 You are a ruthless humanizing editor. Rewrite the text so it reads like a person wrote it. Keep EVERY fact, name, number, and claim from the original; never invent or drop a fact. You may add voice (first person, opinions, asides, humor) where the piece is an essay or opinion, but never add invented facts about the world.
 
+READING LEVEL + SAFETY (hard requirements for EVERY rewrite):
+- Write at a 9th-grade reading level: Flesch-Kincaid grade ~9. Use mostly common, everyday words (3-5 letters). Keep sentences short to medium (8-18 words). One idea per sentence. No SAT words, no jargon, no "utilize/evaluate/facilitate/demonstrate" — say "use/show/help/prove" instead.
+- School-appropriate: zero profanity, zero sexual or mature content, nothing a teacher would flag. Safe for a homework assignment or class essay. Keep tone clean and respectful.
+- This must PASS AI detectors (GPTZero, Turnitin AI, ZeroGPT) with flying colors. Detectors hate uniformity, so BURSTINESS is the #1 rule — wildly vary sentence length: a 3-word sentence, then a 20-word one, then a 9-word one. Never a steady drumbeat of same-length sentences.
+
 KILL THESE AI TELLS:
 - Puffed-up significance: "stands as a testament", "pivotal", "underscores", "broader movement", "setting the stage", "evolving landscape", "deeply rooted", "key role".
 - Superficial -ing analysis: "highlighting...", "reflecting...", "symbolizing...", "fostering...".
@@ -1405,12 +1410,15 @@ SKILL_PROMPTS = {
 # Compact, always-on guidance the chat model folds into EVERY reply.
 # Relevant skills are auto-activated per message (never need to be asked).
 SKILL_GUIDELINES = {
-    "humanize": ("Write in a natural, human voice and erase AI fingerprints. Concrete rules: use contractions; mix "
-                 "very short punchy sentences with longer ones; never write rule-of-three lists; avoid 'delve', "
-                 "'leverage', 'elevate', 'moreover', 'furthermore', 'additionally', 'in conclusion', 'navigate', "
-                 "'robust', 'seamless', 'landscape', 'tapestry', 'unlock'; no em dashes (—); no perfectly parallel "
-                 "openings; add one concrete, personal detail or example; keep paragraphs uneven in length. Sound "
-                 "like a sharp, warm friend — not a template."),
+    "humanize": ("Write in a natural, human voice and erase AI fingerprints. HARD CONSTRAINTS for EVERY reply: "
+                 "1) 9th-grade reading level — simple everyday words, short-to-medium sentences (8-18 words), one idea per sentence. "
+                 "2) School-appropriate — zero profanity, zero mature content, safe for a classroom essay. "
+                 "3) PASS GPTZero/Turnitin/ZeroGPT — BURSTINESS is #1: wildly vary sentence length (3-word, then 20-word, then 9-word). "
+                 "Never uniform sentence lengths. Use contractions; mix very short punchy sentences with longer ones; "
+                 "never write rule-of-three lists; avoid 'delve', 'leverage', 'elevate', 'moreover', 'furthermore', "
+                 "'additionally', 'in conclusion', 'navigate', 'robust', 'seamless', 'landscape', 'tapestry', 'unlock', "
+                 "'utilize', 'facilitate', 'demonstrate'; no em dashes (—); no perfectly parallel openings; "
+                 "add one concrete personal detail or example; keep paragraphs uneven. Sound like a sharp, warm friend — not a template."),
     "design": ("Anything visual you produce (web pages, UI, dashboards, logos): pick a distinctive aesthetic with "
                "a real color palette, font pairing, and spacing scale. Avoid generic purple gradients and default "
                "system font stacks."),
