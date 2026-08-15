@@ -13,7 +13,7 @@ Personal AI assistant for Mohamed. Flask backend (Render) + static website (GitH
 
 1. **Render** — New Web Service → connect repo → root directory `backend` → build command `pip install -r requirements.txt` → start command `gunicorn app11:app`
 2. **Environment variables (Render):** `GROQ_API_KEY` (required — from console.groq.com, free). Optional: `GROQ_MODEL` (default `llama-3.3-70b-versatile`), `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `CANVAS_TOKEN`, `CANVAS_DOMAIN`, `OUTLOOK_EMAIL`, `OUTLOOK_PASSWORD`, `DIGEST_TIME` (HH:MM, default `12:00` UTC), `DIGEST_TZ` (offset, e.g. `-05:00` for Houston)
-3. **GitHub Pages** — nothing to do; pushing to `main` auto-deploys `frontend/` via `.github/workflows/deploy.yml` to `jarvisbot.dev` (DNS: apex `jarvisbot.dev` → A records `185.199.108.153` / `185.199.109.153` / `185.199.110.153` / `185.199.111.153`, optional `www` → CNAME `fusion120.github.io`)
+3. **GitHub Pages** — nothing to do; pushing to `main` auto-deploys `frontend/` via `.github/workflows/deploy.yml` to `jarvisbot.dev` (custom domain set via `CNAME` file, DNS: apex `jarvisbot.dev` → A records `185.199.108.153` / `185.199.109.153` / `185.199.110.153` / `185.199.111.153`, optional `www` → CNAME `fusion120.github.io`)
 4. **Chrome** — `chrome://extensions` → Developer mode → Load unpacked → select `extension/` → set the backend URL in the popup
 
 ## Browser control
@@ -29,7 +29,7 @@ Open the dashboard in Chrome/Edge and click the mic icon in the topbar. Say **"w
 - **Morning digest** — daily briefing of new Outlook email + upcoming Canvas deadlines + scheduled reminders + news, sent to Telegram and spoken. Runs at `DIGEST_TIME` or on demand via the ☀️ chip / "morning briefing" voice command.
 - **Deep research** — the Research page (or "research …" voice command): Jarvis searches the web (Wikipedia + DuckDuckGo + article extraction) and returns a cited answer.
 - **Scheduled reminders** — the Reminders page lets you schedule a task with a date/time; Jarvis alerts you on Telegram when it's due.
-- **Canvas** — assignments auto-complete after the 2-hour window via the Telegram `CANVAS YES` → `SUBMIT` flow. The Canvas page's **Test Canvas** button confirms your token/domain are working.
+- **Canvas** — assignments auto-appear as "Ready" (no waiting). The Canvas page's **Start Assignment** button lets you choose **Outline** or **Full Answer Key** mode; both send the result to Telegram for approval (`SUBMIT`/`REJECT`). The Canvas page's **Test Canvas** button confirms your token/domain are working.
 
 ## Auto-skills (always on)
 
