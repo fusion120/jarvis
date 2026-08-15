@@ -2122,7 +2122,6 @@ def math_solve():
     return jsonify({"solution": sol})
 
 @app.route("/api/canvas/assignments", methods=["GET"])
-@auth
 def canvas_assignments():
     items = get_assignments()
     result = []
@@ -2142,7 +2141,6 @@ def canvas_assignments():
     return jsonify({"assignments": result})
 
 @app.route("/api/canvas/complete", methods=["POST"])
-@auth
 def canvas_complete():
     aid = (request.json or {}).get("assignment_id","")
     if not aid or aid not in assign_timers:
@@ -2166,7 +2164,6 @@ def canvas_complete():
     return jsonify({"message":"Drafting now. Check Telegram in ~30 seconds."})
 
 @app.route("/api/canvas/start", methods=["POST"])
-@auth
 def canvas_start():
     """Start an assignment with either outline or full answer key mode."""
     aid = (request.json or {}).get("assignment_id","")
@@ -3189,7 +3186,6 @@ def mimo_proactive_loop():
 
 # ── CANVAS STATUS ─────────────────────────────────────────────────────
 @app.route("/api/canvas/status", methods=["GET"])
-@auth
 def api_canvas_status():
     configured = bool(CANVAS_TOK and CANVAS_DOM)
     courses, next_due = [], None
