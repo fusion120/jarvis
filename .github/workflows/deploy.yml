@@ -31,6 +31,7 @@ jobs:
         run: |
           mkdir -p _site
           cp frontend/index.html _site/index.html
+          cp CNAME _site/CNAME
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

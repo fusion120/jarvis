@@ -6,3 +6,4 @@ youtube-transcript-api==0.6.2
 trafilatura==1.7.0
 matplotlib>=3.8,<4
 pandas>=2.2,<3
+msal==1.28.0

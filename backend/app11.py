@@ -3,11 +3,15 @@ JARVIS BACKEND v3.0
 - AI: Groq (free) — llama-3.3-70b-versatile
 - Security: API_SECRET token + CORS whitelist
 - Canvas: 2hr timer + Telegram approval flow
-- Outlook: Background polling every 10 min → Telegram summary + draft approval
+- Outlook: Background polling every 10 min → Telegram summary + draft approval (XOAUTH2)
 """
 import os, sys, re, time, base64, tempfile, subprocess, threading, requests, imaplib, smtplib, email as email_lib, json, uuid
 from email.header import decode_header
 from email.mime.text import MIMEText
+try:
+    import msal
+except Exception:
+    msal = None
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -31,11 +35,15 @@ TG_TOKEN       = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TG_CHAT_ID     = os.getenv("TELEGRAM_CHAT_ID", "")
 CANVAS_TOK     = os.getenv("CANVAS_TOKEN", "")
 CANVAS_DOM     = os.getenv("CANVAS_DOMAIN", "")    # e.g. school.instructure.com
-OUTLOOK_EMAIL  = os.getenv("OUTLOOK_EMAIL", "")    # your full email address
-OUTLOOK_PASS   = os.getenv("OUTLOOK_PASSWORD", "") # app password (personal) or regular (school)
-IMAP_SERVER    = os.getenv("IMAP_SERVER", "outlook.office365.com")  # or imap-mail.outlook.com
-SMTP_SERVER    = os.getenv("SMTP_SERVER", "smtp.office365.com")
-POLL_SECS      = int(os.getenv("OUTLOOK_POLL_SECS", "600"))  # 10 min default
+OUTLOOK_EMAIL       = os.getenv("OUTLOOK_EMAIL", "")        # your full email address
+OUTLOOK_PASS        = os.getenv("OUTLOOK_PASSWORD", "")     # app password (personal) — fallback only
+OUTLOOK_CLIENT_ID   = os.getenv("OUTLOOK_CLIENT_ID", "")    # Azure AD app client ID (for XOAUTH2)
+OUTLOOK_TENANT_ID   = os.getenv("OUTLOOK_TENANT_ID", "")    # Azure AD tenant ID (or "common")
+OUTLOOK_AUTH_TOKEN  = os.getenv("OUTLOOK_AUTH_TOKEN", "")   # cached access token (refreshed by refresh token)
+OUTLOOK_REFRESH_TOK = os.getenv("OUTLOOK_REFRESH_TOKEN", "")# refresh token (long-lived)
+IMAP_SERVER         = os.getenv("IMAP_SERVER", "outlook.office365.com")
+SMTP_SERVER         = os.getenv("SMTP_SERVER", "smtp.office365.com")
+POLL_SECS           = int(os.getenv("OUTLOOK_POLL_SECS", "600"))  # 10 min default
 DIGEST_TIME    = os.getenv("DIGEST_TIME", "12:00")  # HH:MM daily digest (UTC by default)
 DIGEST_TZ      = os.getenv("DIGEST_TZ", "+00:00")   # timezone offset, e.g. -05:00 for Houston (CT)
 # Full access: MIMO/Jarvis can run commands & write files anywhere on Mohamed's
@@ -343,18 +351,63 @@ def tg(msg):
                       timeout=10)
     except: pass
 
-# ── OUTLOOK VIA IMAP/SMTP (no app registration needed) ───────────────
+# ── OUTLOOK VIA IMAP/SMTP (XOAUTH2 + app-password fallback) ──────────
 import imaplib, smtplib, email as email_lib
 from email.header import decode_header
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
+# Microsoft disabled basic IMAP/SMTP auth for Outlook/M365, so we authenticate
+# with an OAuth2 access token (XOAUTH2) when an Azure app is configured.
+# If only OUTLOOK_EMAIL + OUTLOOK_PASSWORD are set (e.g. a personal account
+# still allowing app passwords), it falls back to plain login.
+_OUTLOOK_SCOPES = ["https://outlook.office365.com/IMAP.AccessAsUser.All",
+                   "https://outlook.office365.com/SMTP.Send"]
+_token_cache = {}  # in-memory cache of the current access token
+
+def get_access_token():
+    """Return a fresh OAuth2 access token, or None if not configured."""
+    global _token_cache
+    if not (msal and OUTLOOK_CLIENT_ID and OUTLOOK_REFRESH_TOK):
+        return None
+    # Use cached token if still valid (with 5-min safety margin)
+    cached = _token_cache.get("token")
+    expires = _token_cache.get("expires", 0)
+    if cached and time.time() < expires - 300:
+        return cached
+    try:
+        tenant = OUTLOOK_TENANT_ID or "common"
+        authority = f"https://login.microsoftonline.com/{tenant}"
+        app = msal.PublicClientApplication(OUTLOOK_CLIENT_ID, authority=authority)
+        # Acquire new token via refresh token (no interactive browser)
+        result = app.acquire_token_by_refresh_token(OUTLOOK_REFRESH_TOK, _OUTLOOK_SCOPES)
+        if "access_token" in result:
+            _token_cache = {"token": result["access_token"],
+                            "expires": time.time() + result.get("expires_in", 3600)}
+            return result["access_token"]
+        print(f"OAuth token error: {result.get('error_description','?')}")
+    except Exception as e:
+        print(f"OAuth error: {e}")
+    return None
+
+def _imap_auth_args():
+    """Returns (method, creds) for IMAP login. Prefers XOAUTH2."""
+    tok = get_access_token()
+    if tok:
+        auth_str = f"user={OUTLOOK_EMAIL}\x01auth=Bearer {tok}\x01\x01"
+        return ("xoauth2", base64.b64encode(auth_str.encode()).decode())
+    return ("basic", (OUTLOOK_EMAIL, OUTLOOK_PASS))
+
 def get_emails(top=15):
-    if not OUTLOOK_EMAIL or not OUTLOOK_PASS:
+    if not OUTLOOK_EMAIL or not (OUTLOOK_PASS or get_access_token()):
         return []
     try:
         mail = imaplib.IMAP4_SSL(IMAP_SERVER)
-        mail.login(OUTLOOK_EMAIL, OUTLOOK_PASS)
+        method, creds = _imap_auth_args()
+        if method == "xoauth2":
+            mail.authenticate("XOAUTH2", lambda _: creds)
+        else:
+            mail.login(*creds)
         mail.select("INBOX")
         # Get unseen first, fall back to recent
         _, uids = mail.search(None, "UNSEEN")
@@ -414,7 +467,7 @@ def get_emails(top=15):
         return []
 
 def send_email(to, subject, body, reply_id=None):
-    if not OUTLOOK_EMAIL or not OUTLOOK_PASS:
+    if not OUTLOOK_EMAIL or not (OUTLOOK_PASS or get_access_token()):
         return False, "Outlook not configured."
     try:
         msg = MIMEMultipart()
@@ -425,7 +478,12 @@ def send_email(to, subject, body, reply_id=None):
         with smtplib.SMTP(SMTP_SERVER, 587) as server:
             server.ehlo()
             server.starttls()
-            server.login(OUTLOOK_EMAIL, OUTLOOK_PASS)
+            tok = get_access_token()
+            if tok:
+                auth_str = f"user={OUTLOOK_EMAIL}\x01auth=Bearer {tok}\x01\x01"
+                server.docmd("AUTH", "XOAUTH2 " + base64.b64encode(auth_str.encode()).decode())
+            else:
+                server.login(OUTLOOK_EMAIL, OUTLOOK_PASS)
             server.sendmail(OUTLOOK_EMAIL, to, msg.as_string())
         return True, "Sent."
     except Exception as e:
@@ -477,19 +535,14 @@ def submit_canvas(course_id, assignment_id, body_text):
 def start_timer(a):
     aid = a["id"]
     if aid in assign_timers: return
-    assign_timers[aid] = {**a, "start": time.time(), "status": "pending"}
-
-    def run():
-        time.sleep(7200)  # 2 hours
-        if aid not in assign_timers: return
-        assign_timers[aid]["status"] = "ready"
-        tg(f"📚 <b>ASSIGNMENT READY</b>\n\n"
-           f"<b>Course:</b> {a['course']}\n"
-           f"<b>Title:</b> {a['title']}\n"
-           f"<b>Due:</b> {a.get('due','?')}\n\n"
-           f"Shall I complete and submit it?\n"
-           f"Reply: <code>CANVAS YES {aid}</code>  or  <code>CANVAS NO {aid}</code>")
-    threading.Thread(target=run, daemon=True).start()
+    # No wait timer - assignments are immediately ready to complete
+    assign_timers[aid] = {**a, "start": time.time(), "status": "ready"}
+    tg(f"🎓 <b>NEW ASSIGNMENT</b>\n\n"
+       f"<b>Course:</b> {a['course']}\n"
+       f"<b>Title:</b> {a['title']}\n"
+       f"<b>Due:</b> {a.get('due','?')}\n"
+       f"<b>Points:</b> {a.get('points','?')}\n\n"
+       f"Ready to start — click \"Start Assignment\" in the Canvas tab.")
 
 # ── BACKGROUND: CANVAS POLLER ─────────────────────────────────────────
 def canvas_loop():
@@ -500,12 +553,6 @@ def canvas_loop():
                 if aid not in seen_assignments:
                     seen_assignments.add(aid)
                     start_timer(a)
-                    tg(f"🎓 <b>NEW ASSIGNMENT</b>\n\n"
-                       f"<b>Course:</b> {a['course']}\n"
-                       f"<b>Title:</b> {a['title']}\n"
-                       f"<b>Due:</b> {a.get('due','?')}\n"
-                       f"<b>Points:</b> {a.get('points','?')}\n\n"
-                       f"2-hour auto-complete window started.")
         except Exception as e:
             print(f"Canvas error: {e}")
         time.sleep(900)
@@ -2083,12 +2130,14 @@ def canvas_assignments():
         aid = a["id"]
         t = assign_timers.get(aid, {})
         status = t.get("status","pending")
+        # Only show unfinished assignments (pending, ready, drafting, awaiting)
+        if status in ("done", "submitted"):
+            continue
         pct, label = 0, ""
         if "start" in t:
             elapsed  = time.time() - t["start"]
-            pct      = min(100, int(elapsed/7200*100))
-            rem      = max(0, 7200-elapsed)
-            label    = f"{int(rem//3600)}h {int(rem%3600//60)}m remaining"
+            pct      = 100  # instant ready
+            label    = "Ready"
         result.append({**a,"status":status,"timer_pct":pct,"timer_label":label})
     return jsonify({"assignments": result})
 
@@ -2115,6 +2164,39 @@ def canvas_complete():
            f"Reply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
     threading.Thread(target=do, daemon=True).start()
     return jsonify({"message":"Drafting now. Check Telegram in ~30 seconds."})
+
+@app.route("/api/canvas/start", methods=["POST"])
+@auth
+def canvas_start():
+    """Start an assignment with either outline or full answer key mode."""
+    aid = (request.json or {}).get("assignment_id","")
+    mode = (request.json or {}).get("mode","full")  # 'outline' or 'full'
+    if not aid or aid not in assign_timers:
+        return jsonify({"message":"Assignment not found."}), 404
+    a = assign_timers[aid]
+    assign_timers[aid]["status"] = "drafting"
+
+    def do():
+        if mode == "outline":
+            draft = ask([{"role":"user","content":f"Create a detailed outline for this assignment:\n\nTitle: {a['title']}\nCourse: {a['course']}\n\nInstructions:\n{a.get('description','')}"}],
+                        system="You are Jarvis creating an academic assignment outline for Mohamed. Provide a clear structure with main sections, key points, arguments, and evidence to include. Be concise but thorough.",
+                        max_tokens=1500)
+            mode_label = "Outline"
+        else:
+            draft = ask([{"role":"user","content":f"Complete this assignment fully with a complete answer key:\n\nTitle: {a['title']}\nCourse: {a['course']}\n\nInstructions:\n{a.get('description','')}"}],
+                        system="You are Jarvis completing a university assignment for Mohamed. Write a complete well-structured academic response with full answers, explanations, and reasoning.",
+                        max_tokens=2500)
+            mode_label = "Full Answer Key"
+        pid = f"canvas_{aid}"
+        pending[pid] = {"type":"canvas","assignment":a,"draft":draft,"aid":aid}
+        assign_timers[aid]["status"] = "awaiting"
+        tg(f"📝 <b>{mode_label.upper()} READY</b>\n\n"
+           f"<b>Course:</b> {a['course']}\n"
+           f"<b>Title:</b> {a['title']}\n\n"
+           f"{draft[:1500]}{'...' if len(draft)>1500 else ''}\n\n"
+           f"Reply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
+    threading.Thread(target=do, daemon=True).start()
+    return jsonify({"message":f"Generating {mode_label.lower()} now. Check Telegram in ~30 seconds."})
 
 @app.route("/api/outlook/emails", methods=["GET"])
 @auth

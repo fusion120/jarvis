@@ -24,7 +24,13 @@ services:
         sync: false
       - key: OUTLOOK_EMAIL       # optional — for Outlook / email reading
         sync: false
-      - key: OUTLOOK_PASSWORD    # optional — Outlook app password
+      - key: OUTLOOK_PASSWORD    # optional — Outlook app password (fallback)
+        sync: false
+      - key: OUTLOOK_CLIENT_ID   # optional — Azure AD app (client) ID for XOAUTH2
+        sync: false
+      - key: OUTLOOK_TENANT_ID   # optional — Azure AD tenant ID (or "common")
+        sync: false
+      - key: OUTLOOK_REFRESH_TOKEN # optional — OAuth2 refresh token (long-lived)
         sync: false
       - key: ALLOWED_ORIGIN      # optional — lock CORS to your frontend URL
         sync: false
