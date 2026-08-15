@@ -2123,6 +2123,8 @@ def math_solve():
 
 @app.route("/api/canvas/assignments", methods=["GET"])
 def canvas_assignments():
+    if not CANVAS_TOK or not CANVAS_DOM:
+        return jsonify({"assignments": [], "error": "Canvas not configured — set CANVAS_TOKEN and CANVAS_DOMAIN on Render"})
     items = get_assignments()
     result = []
     for a in items:
@@ -2142,6 +2144,8 @@ def canvas_assignments():
 
 @app.route("/api/canvas/complete", methods=["POST"])
 def canvas_complete():
+    if not CANVAS_TOK or not CANVAS_DOM:
+        return jsonify({"message":"Canvas not configured — set CANVAS_TOKEN and CANVAS_DOMAIN on Render"}), 400
     aid = (request.json or {}).get("assignment_id","")
     if not aid or aid not in assign_timers:
         return jsonify({"message":"Assignment not found."}), 404
@@ -2166,6 +2170,8 @@ def canvas_complete():
 @app.route("/api/canvas/start", methods=["POST"])
 def canvas_start():
     """Start an assignment with either outline or full answer key mode."""
+    if not CANVAS_TOK or not CANVAS_DOM:
+        return jsonify({"message":"Canvas not configured — set CANVAS_TOKEN and CANVAS_DOMAIN on Render"}), 400
     aid = (request.json or {}).get("assignment_id","")
     mode = (request.json or {}).get("mode","full")  # 'outline' or 'full'
     if not aid or aid not in assign_timers:
