@@ -491,30 +491,130 @@ def send_email(to, subject, body, reply_id=None):
 
 # ── CANVAS ────────────────────────────────────────────────────────────
 def canvas(path):
+    """GET a single Canvas API page. Returns parsed JSON, or None on failure."""
     if not CANVAS_TOK or not CANVAS_DOM: return None
     try:
         r = requests.get(f"https://{CANVAS_DOM}/api/v1{path}",
-                         headers={"Authorization": f"Bearer {CANVAS_TOK}"}, timeout=15)
+                         headers={"Authorization": f"Bearer {CANVAS_TOK}"}, timeout=20)
         if r.status_code == 401:
             tg("⚠️ <b>Canvas token expired.</b> Please renew it.")
+            return None
+        if r.status_code != 200:
             return None
         return r.json()
     except: return None
 
-def get_assignments():
-    courses = canvas("/courses?enrollment_state=active&per_page=30") or []
+def canvas_paginate(path, per_page=100):
+    """Fetch ALL pages of a Canvas list endpoint (follows the Link header).
+    This is what gives full access instead of just the first 20/30 items."""
+    if not CANVAS_TOK or not CANVAS_DOM: return []
+    items, url = [], f"https://{CANVAS_DOM}/api/v1{path}"
+    url += ("&" if "?" in url else "?") + f"per_page={per_page}"
+    while url:
+        try:
+            r = requests.get(url, headers={"Authorization": f"Bearer {CANVAS_TOK}"}, timeout=20)
+            if r.status_code == 401:
+                tg("⚠️ <b>Canvas token expired.</b> Please renew it.")
+                break
+            if r.status_code != 200:
+                break
+            items.extend(r.json())
+            nxt = ""
+            for part in r.headers.get("Link","").split(","):
+                if 'rel="next"' in part:
+                    nxt = part[part.find("<")+1:part.find(">")]
+                    break
+            url = nxt if nxt.startswith("https://") else None
+        except Exception:
+            break
+    return items
+
+def _strip_html(s, n=5000):
+    return re.sub(r"<[^<]+?>"," ", s or "").strip()[:n]
+
+def get_assignment_detail(course_id, aid):
+    """Fetch the FULL content of one assignment: complete description, the
+    current user's real submission status, quiz questions, and attachment
+    info. This is what lets Jarvis actually SEE the assignment contents."""
+    detail = {"course_id": str(course_id), "id": str(aid), "description":"",
+              "submitted": False, "grade":None, "score":None,
+              "submission_types":[], "quiz_questions":[], "attachments":[]}
+    try:
+        a = canvas(f"/courses/{course_id}/assignments/{aid}")
+        if not a: return detail
+        detail["description"] = _strip_html(a.get("description"))
+        detail["submission_types"] = a.get("submission_types") or []
+        detail["quiz_id"] = a.get("quiz_id")
+        detail["attachments"] = [{
+            "name": f.get("display_name","file"),
+            "url": f.get("url",""),
+            "size": f.get("size",0),
+            "content_type": f.get("content-type",""),
+        } for f in (a.get("attachments") or [])]
+        # Current user's real submission status
+        sub = canvas(f"/courses/{course_id}/assignments/{aid}/submissions/self")
+        if sub:
+            detail["submitted"] = bool(sub.get("submitted_at"))
+            detail["grade"] = sub.get("grade")
+            detail["score"] = sub.get("score")
+        # Quiz questions, if this assignment is a quiz
+        qid = a.get("quiz_id")
+        if qid:
+            qs = canvas_paginate(f"/courses/{course_id}/quizzes/{qid}/questions")
+            for q in qs:
+                detail["quiz_questions"].append({
+                    "id": q.get("id"),
+                    "text": _strip_html(q.get("question_text")),
+                    "type": q.get("question_type"),
+                    "points": q.get("points_possible"),
+                    "answers": [_strip_html(x.get("text")) for x in (q.get("answers") or []) if x.get("text")],
+                })
+    except Exception as e:
+        print("canvas detail err", e)
+    return detail
+
+def build_assignment_prompt(a, detail):
+    """Assemble the full assignment content into one prompt for the model."""
+    parts = [f"Assignment: {a['title']}", f"Course: {a['course']}",
+             f"Due: {a.get('due','?')}", f"Points: {a.get('points','?')}"]
+    desc = detail.get("description") or a.get("description") or ""
+    if desc:
+        parts.append(f"\nInstructions:\n{desc}")
+    if detail.get("quiz_questions"):
+        parts.append("\nQuiz questions:")
+        for q in detail["quiz_questions"]:
+            parts.append(f"- {q.get('text') or '(question)'}")
+            if q.get("answers"):
+                parts.append("  Options: " + "; ".join(q["answers"][:10]))
+    if detail.get("attachments"):
+        parts.append("\nAttached files: " + ", ".join(f['name'] for f in detail['attachments']))
+    return "\n".join(parts)
+
+def get_assignments(include_submitted=False):
+    """Fetch ALL assignments across all active courses (paginated, no 20-item
+    cap). Each entry carries a description snippet plus the REAL Canvas
+    submission status, so submitted work is filtered by Canvas, not by memory."""
+    courses = canvas_paginate("/courses?enrollment_state=active")
     out = []
     for c in courses:
         cid = c.get("id")
         if not cid: continue
-        items = canvas(f"/courses/{cid}/assignments?order_by=due_at&bucket=upcoming&per_page=20") or []
+        # include[]=submission returns the current user's submission on each item
+        items = canvas_paginate(f"/courses/{cid}/assignments?include[]=submission")
         for a in items:
+            sub = a.get("submission") or {}
+            submitted = bool(sub.get("submitted_at"))
+            if submitted and not include_submitted:
+                continue
             out.append({
                 "id": str(a["id"]), "course_id": str(cid),
                 "title": a.get("name",""), "course": c.get("name",""),
                 "due": a.get("due_at",""), "points": a.get("points_possible"),
                 "url": a.get("html_url",""),
-                "description": re.sub(r"<[^<]+?>"," ",a.get("description","") or "").strip()[:3000],
+                "submitted": submitted,
+                "submission_type": (a.get("submission_types") or [""])[0],
+                "quiz_id": a.get("quiz_id"),
+                "description": _strip_html(a.get("description")),
             })
     return out
 
@@ -548,7 +648,8 @@ def start_timer(a):
 def canvas_loop():
     while True:
         try:
-            for a in get_assignments():
+            # Only newly-seen, still-unsubmitted assignments get notified
+            for a in get_assignments(include_submitted=False):
                 aid = a["id"]
                 if aid not in seen_assignments:
                     seen_assignments.add(aid)
@@ -2125,21 +2226,18 @@ def math_solve():
 def canvas_assignments():
     if not CANVAS_TOK or not CANVAS_DOM:
         return jsonify({"assignments": [], "error": "Canvas not configured — set CANVAS_TOKEN and CANVAS_DOMAIN on Render"})
-    items = get_assignments()
+    # get_assignments() already excludes Canvas-submitted work
+    items = get_assignments(include_submitted=False)
     result = []
     for a in items:
         aid = a["id"]
         t = assign_timers.get(aid, {})
         status = t.get("status","pending")
-        # Only show unfinished assignments (pending, ready, drafting, awaiting)
         if status in ("done", "submitted"):
             continue
-        pct, label = 0, ""
-        if "start" in t:
-            elapsed  = time.time() - t["start"]
-            pct      = 100  # instant ready
-            label    = "Ready"
-        result.append({**a,"status":status,"timer_pct":pct,"timer_label":label})
+        result.append({**a, "status": status,
+                       "timer_pct": 100 if "start" in t else 0,
+                       "timer_label": "Ready" if "start" in t else ""})
     return jsonify({"assignments": result})
 
 @app.route("/api/canvas/complete", methods=["POST"])
@@ -2150,19 +2248,22 @@ def canvas_complete():
     if not aid or aid not in assign_timers:
         return jsonify({"message":"Assignment not found."}), 404
     a = assign_timers[aid]
+    detail = get_assignment_detail(a["course_id"], aid)
+    prompt_text = build_assignment_prompt(a, detail)
+    a["full_detail"] = detail  # cache for later use
     assign_timers[aid]["status"] = "drafting"
 
     def do():
-        draft = ask([{"role":"user","content":f"Complete this assignment fully:\n\nTitle: {a['title']}\nCourse: {a['course']}\n\nInstructions:\n{a.get('description','')}"}],
+        draft = ask([{"role":"user","content":prompt_text}],
                     system="You are Jarvis completing a university assignment for Mohamed. Write a complete well-structured academic response.",
-                    max_tokens=2000)
+                    max_tokens=2500)
         pid = f"canvas_{aid}"
         pending[pid] = {"type":"canvas","assignment":a,"draft":draft,"aid":aid}
         assign_timers[aid]["status"] = "awaiting"
         tg(f"📝 <b>DRAFT COMPLETE</b>\n\n"
            f"<b>Course:</b> {a['course']}\n"
            f"<b>Title:</b> {a['title']}\n\n"
-           f"{draft[:700]}{'...' if len(draft)>700 else ''}\n\n"
+           f"{draft[:1500]}{'...' if len(draft)>1500 else ''}\n\n"
            f"Reply: <code>SUBMIT {pid}</code>  or  <code>REJECT {pid}</code>")
     threading.Thread(target=do, daemon=True).start()
     return jsonify({"message":"Drafting now. Check Telegram in ~30 seconds."})
@@ -2177,16 +2278,19 @@ def canvas_start():
     if not aid or aid not in assign_timers:
         return jsonify({"message":"Assignment not found."}), 404
     a = assign_timers[aid]
+    detail = get_assignment_detail(a["course_id"], aid)
+    prompt_text = build_assignment_prompt(a, detail)
+    a["full_detail"] = detail  # cache for later use
     assign_timers[aid]["status"] = "drafting"
 
     def do():
         if mode == "outline":
-            draft = ask([{"role":"user","content":f"Create a detailed outline for this assignment:\n\nTitle: {a['title']}\nCourse: {a['course']}\n\nInstructions:\n{a.get('description','')}"}],
+            draft = ask([{"role":"user","content":prompt_text}],
                         system="You are Jarvis creating an academic assignment outline for Mohamed. Provide a clear structure with main sections, key points, arguments, and evidence to include. Be concise but thorough.",
                         max_tokens=1500)
             mode_label = "Outline"
         else:
-            draft = ask([{"role":"user","content":f"Complete this assignment fully with a complete answer key:\n\nTitle: {a['title']}\nCourse: {a['course']}\n\nInstructions:\n{a.get('description','')}"}],
+            draft = ask([{"role":"user","content":prompt_text}],
                         system="You are Jarvis completing a university assignment for Mohamed. Write a complete well-structured academic response with full answers, explanations, and reasoning.",
                         max_tokens=2500)
             mode_label = "Full Answer Key"
